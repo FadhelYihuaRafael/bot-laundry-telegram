@@ -23,6 +23,9 @@ if sys.platform.startswith("win"):
 # ==========================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8925512883:AAHvOTZmJ0i0WOgvmO6KGYfWqrbmCBuuQ-g")
 
+# PIN Rahasia untuk mendaftarkan/mengubah akun Admin (Bisa diubah lewat env atau langsung di sini)
+ADMIN_PIN = os.getenv("ADMIN_PIN", "freshclean88")
+
 # File untuk menyimpan ID Admin agar tidak hilang saat bot restart
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "admin_config.json")
 
@@ -30,15 +33,21 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "admin_config.json")
 ORDERS_FILE = os.path.join(os.path.dirname(__file__), "orders.json")
 
 def load_admin_id():
-    """Memuat ID Admin dari file konfigurasi jika ada"""
+    """Memuat ID Admin dari environment variable, file konfigurasi, atau fallback ID pemilik asli"""
+    env_id = os.getenv("ADMIN_CHAT_ID")
+    if env_id:
+        try:
+            return int(env_id)
+        except ValueError:
+            pass
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("admin_chat_id", 0)
+                return data.get("admin_chat_id", 1335564018)
         except Exception:
-            return 0
-    return 0
+            return 1335564018
+    return 1335564018
 
 def save_admin_id(admin_id):
     """Menyimpan ID Admin ke file konfigurasi"""
@@ -143,7 +152,6 @@ def setup_bot_commands():
             types.BotCommand("tarif", "🧺 Daftar Layanan & Tarif"),
             types.BotCommand("cekpesanan", "🔍 Cek Status Pengerjaan Cucian"),
             types.BotCommand("myid", "🆔 ID Telegram Saya"),
-            types.BotCommand("setadmin", "👑 Daftarkan Akun Admin"),
         ]
         bot.set_my_commands(commands)
         try:
@@ -246,20 +254,126 @@ def show_my_id(message):
 
 @bot.message_handler(commands=['setadmin'])
 def set_admin_handler(message):
-    """Mendaftarkan akun yang mengirim perintah ini sebagai admin penerima order laundry"""
+    """Mendaftarkan atau mengubah akun admin dengan proteksi PIN rahasia"""
     global ADMIN_CHAT_ID
-    ADMIN_CHAT_ID = message.chat.id
-    save_admin_id(ADMIN_CHAT_ID)
-    
+    chat_id = message.chat.id
     user_name = message.from_user.first_name
+    parts = message.text.strip().split()
+
+    # Cek apakah user menyertakan PIN rahasia
+    if len(parts) < 2:
+        bot.reply_to(
+            message,
+            "🔒 *AKSES DITOLAK: Perintah ini dilindungi PIN Rahasia!*\n\n"
+            "Format yang benar:\n"
+            "`/setadmin [PIN_RAHASIA]`\n\n"
+            "Contoh: `/setadmin freshclean88`",
+            parse_mode="Markdown"
+        )
+        if ADMIN_CHAT_ID and chat_id != ADMIN_CHAT_ID:
+            try:
+                bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"⚠️ *PERINGATAN KEAMANAN!*\n"
+                    f"Seseorang mencoba menjalankan `/setadmin` tanpa PIN:\n"
+                    f"• Nama: {user_name}\n"
+                    f"• User ID: `{chat_id}`\n"
+                    f"• Username: @{message.from_user.username or '-'}",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+        return
+
+    input_pin = parts[1]
+    if input_pin != ADMIN_PIN:
+        bot.reply_to(
+            message,
+            "❌ *PIN SALAH!*\n"
+            "Akses ditolak. Percobaan tidak sah ini telah dicatat sistem keamanan bot.",
+            parse_mode="Markdown"
+        )
+        if ADMIN_CHAT_ID and chat_id != ADMIN_CHAT_ID:
+            try:
+                bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"🚨 *PERINGATAN KEAMANAN: PERCOBAAN AKSES ADMIN ILEGAL!*\n"
+                    f"Seseorang memasukkan PIN yang salah pada `/setadmin`:\n"
+                    f"• Nama: {user_name}\n"
+                    f"• User ID: `{chat_id}`\n"
+                    f"• Username: @{message.from_user.username or '-'}\n"
+                    f"• PIN yang dicoba: `{input_pin}`",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+        return
+
+    # Jika PIN Benar
+    ADMIN_CHAT_ID = chat_id
+    save_admin_id(ADMIN_CHAT_ID)
     bot.reply_to(
         message,
-        f"✅ *Sukses Mendaftarkan Admin Laundry!*\n\n"
-        f"Halo *{user_name}*, akun Telegram Anda (`{ADMIN_CHAT_ID}`) sekarang resmi terdaftar sebagai *Admin FreshClean Laundry*.\n\n"
-        "Setiap kali ada pelanggan yang memesan layanan laundry atau request pick-up, detail pesanan akan langsung dikirim ke sini! 🔔",
+        f"✅ *Autentikasi Admin Berhasil!*\n\n"
+        f"Halo *{user_name}*, akun Telegram Anda (`{ADMIN_CHAT_ID}`) sekarang resmi terverifikasi sebagai *Admin FreshClean Laundry* 👑.\n\n"
+        "Gunakan perintah `/admin` atau `/rekap` untuk membuka Panel Kontrol Admin!",
         parse_mode="Markdown"
     )
     print(f"[INFO] Admin Laundry berhasil diset ke Chat ID: {ADMIN_CHAT_ID} ({user_name})", flush=True)
+
+
+@bot.message_handler(commands=['admin', 'rekap', 'panel'])
+def admin_panel_handler(message):
+    """Panel kontrol khusus admin untuk memantau status antrean cucian"""
+    chat_id = message.chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        bot.reply_to(
+            message,
+            "⛔ *Akses Ditolak!*\n"
+            "Perintah ini hanya dapat diakses oleh Admin Resmi FreshClean Laundry.",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Hitung statistik order
+    total_orders = len(all_orders)
+    menunggu_count = sum(1 for o in all_orders.values() if o.get("status") == "menunggu")
+    dicuci_count = sum(1 for o in all_orders.values() if o.get("status") == "dicuci")
+    disetrika_count = sum(1 for o in all_orders.values() if o.get("status") == "disetrika")
+    siap_antar_count = sum(1 for o in all_orders.values() if o.get("status") == "siap_antar")
+    selesai_count = sum(1 for o in all_orders.values() if o.get("status") == "selesai")
+
+    # Ambil antrean pengerjaan terkini
+    active_orders = [o for o in all_orders.values() if o.get("status") not in ["selesai", "dibatalkan"]]
+    active_orders_sorted = sorted(active_orders, key=lambda x: x.get("waktu", ""), reverse=True)[:5]
+
+    order_list_text = ""
+    if active_orders_sorted:
+        order_list_text = "\n📋 *Antrean Pengerjaan Terkini (Maks. 5):*\n"
+        for o in active_orders_sorted:
+            st = STATUS_LIST.get(o.get("status", ""), o.get("status", ""))
+            order_list_text += f"• `{o.get('order_id')}` | {o.get('nama')} ({o.get('layanan')})\n  └ Status: _{st}_\n"
+    else:
+        order_list_text = "\n🎉 *Tidak ada antrean cucian aktif saat ini.*"
+
+    admin_panel_text = (
+        "👑 *PANEL KONTROL ADMIN - FRESHCLEAN LAUNDRY*\n"
+        "─────────────────────────\n"
+        f"📊 *Ringkasan Status Seluruh Cucian:*\n"
+        f"• ⏳ Menunggu Jemput/Outlet : *{menunggu_count}*\n"
+        f"• 🧺 Sedang Dicuci          : *{dicuci_count}*\n"
+        f"• 👔 Sedang Disetrika       : *{disetrika_count}*\n"
+        f"• 🛵 Siap Diantar / Diambil : *{siap_antar_count}*\n"
+        f"• ✅ Selesai                : *{selesai_count}*\n"
+        f"• 📦 Total Seluruh Nota     : *{total_orders}*\n"
+        "─────────────────────────"
+        f"{order_list_text}\n\n"
+        "💡 *Tips Admin:*\n"
+        "• Gunakan `/cekpesanan [ID_NOTA]` untuk melihat detail nota.\n"
+        "• Klik tombol tahapan di notifikasi pesanan untuk memperbarui status cucian pelanggan."
+    )
+
+    bot.send_message(chat_id, admin_panel_text, parse_mode="Markdown")
 
 
 # ==========================================
