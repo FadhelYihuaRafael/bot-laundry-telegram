@@ -1453,6 +1453,7 @@ def process_query(message, query, is_admin=False):
         answer = smart_local_assistant(query, user_name, is_admin=is_admin)
 
     # Jika pelanggan yang bertanya, sertakan tombol aksi cepat di bawah jawaban
+    markup = None
     if not is_admin:
         markup = types.InlineKeyboardMarkup(row_width=2)
         btn_order = types.InlineKeyboardButton("🛵 Pesan Laundry", callback_data="mulai_order")
@@ -1460,9 +1461,15 @@ def process_query(message, query, is_admin=False):
         btn_menu = types.InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_utama")
         markup.add(btn_order, btn_tarif)
         markup.add(btn_menu)
+
+    # Kirim balasan dengan perlindungan error formatting Markdown (Fallback ke plain text jika entitas unclosed)
+    try:
         bot.reply_to(message, answer, parse_mode="Markdown", reply_markup=markup)
-    else:
-        bot.reply_to(message, answer, parse_mode="Markdown")
+    except Exception as parse_err:
+        try:
+            bot.reply_to(message, answer, parse_mode=None, reply_markup=markup)
+        except Exception as e:
+            print(f"[ERROR] Gagal mengirim balasan: {e}", flush=True)
 
 
 @bot.message_handler(commands=['tanya', 'ai', 'ask'])
