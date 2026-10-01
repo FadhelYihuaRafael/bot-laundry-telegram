@@ -106,8 +106,8 @@ user_orders = {}
 # ==========================================
 # KEYBOARD / MENU INTERAKTIF
 # ==========================================
-def main_menu():
-    """Menu Utama Bot Laundry"""
+def main_menu(is_admin=False):
+    """Menu Utama Bot Laundry (dilengkapi tombol khusus admin jika yang membuka adalah Admin)"""
     markup = types.InlineKeyboardMarkup(row_width=2)
     
     btn_tarif = types.InlineKeyboardButton("🧺 Layanan & Tarif", callback_data="menu_tarif")
@@ -120,13 +120,23 @@ def main_menu():
     markup.add(btn_tarif, btn_order)
     markup.add(btn_cek_status, btn_promo)
     markup.add(btn_lokasi, btn_kontak)
+
+    # Menu Khusus Eksklusif Pemilik / Admin Toko
+    if is_admin:
+        btn_admin = types.InlineKeyboardButton("👑 Panel Kontrol Admin", callback_data="buka_panel_admin")
+        btn_tanya = types.InlineKeyboardButton("🤖 Tanya Asisten Cerdas", callback_data="buka_asisten_admin")
+        markup.add(btn_admin, btn_tanya)
+
     return markup
 
-def back_to_main_menu():
+def back_to_main_menu(is_admin=False):
     """Tombol kembali ke menu utama"""
     markup = types.InlineKeyboardMarkup()
     btn_back = types.InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="menu_utama")
     markup.add(btn_back)
+    if is_admin:
+        btn_admin = types.InlineKeyboardButton("👑 Panel Admin", callback_data="buka_panel_admin")
+        markup.add(btn_admin)
     return markup
 
 def cancel_order_markup():
@@ -137,15 +147,23 @@ def cancel_order_markup():
     markup.row(btn_cancel, btn_home)
     return markup
 
-def persistent_menu_markup():
-    """Keyboard menu tombol cepat di bagian bawah chat Telegram agar pengguna bisa langsung klik tanpa mengetik"""
+def persistent_menu_markup(is_admin=False):
+    """Keyboard menu tombol cepat di bagian bawah chat Telegram yang dipisahkan antara Admin dan User"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn_start = types.KeyboardButton("🚀 /start")
-    btn_order = types.KeyboardButton("🛵 Pesan Laundry")
-    btn_tarif = types.KeyboardButton("🧺 Daftar Tarif")
-    btn_status = types.KeyboardButton("🔍 Cek Status Cucian")
-    markup.row(btn_start, btn_order)
-    markup.row(btn_tarif, btn_status)
+    if is_admin:
+        btn_start = types.KeyboardButton("🚀 /start")
+        btn_admin = types.KeyboardButton("👑 /admin")
+        btn_rekap = types.KeyboardButton("📊 /rekap")
+        btn_tanya = types.KeyboardButton("💬 /tanya")
+        markup.row(btn_start, btn_admin)
+        markup.row(btn_rekap, btn_tanya)
+    else:
+        btn_start = types.KeyboardButton("🚀 /start")
+        btn_order = types.KeyboardButton("🛵 Pesan Laundry")
+        btn_tarif = types.KeyboardButton("🧺 Daftar Tarif")
+        btn_status = types.KeyboardButton("🔍 Cek Status Cucian")
+        markup.row(btn_start, btn_order)
+        markup.row(btn_tarif, btn_status)
     return markup
 
 def setup_bot_commands():
@@ -197,26 +215,41 @@ def metode_layanan_markup():
 @bot.message_handler(func=lambda msg: (msg.text or "").strip() in ["🚀 /start", "🧺 Menu Utama", "Menu Utama", "Mulai", "/start", "start"])
 def send_welcome(message):
     user_name = message.from_user.first_name
-    welcome_text = (
-        f"Halo, *{user_name}*! 👋 Selamat datang di *FreshClean Laundry* 🧺✨\n\n"
-        "Solusi cucian bersih, wangi, higienis, dan rapi tanpa repot! "
-        "Kami melayani cuci kiloan, satuan (bed cover, jas, selimut), sepatu, hingga *layanan antar-jemput langsung ke rumah/kost Anda*.\n\n"
-        "Silakan pilih menu di bawah ini untuk melihat daftar tarif atau langsung pesan penjemputan cucian:\n\n"
-        "💡 *Tips:* Anda bisa klik tombol *🚀 /start* di keyboard bawah atau tombol *Menu [ / ]* di samping kiri kolom chat kapan saja tanpa perlu mengetik!"
-    )
-    # Aktifkan tombol keyboard cepat di layar bawah
+    is_admin = (message.chat.id == ADMIN_CHAT_ID)
+
+    if is_admin:
+        welcome_text = (
+            f"Halo, *{user_name}*! 👋 Selamat datang di *FreshClean Laundry* 🧺✨\n\n"
+            "👑 *STATUS ANDA: PEMILIK / ADMIN UTAMA TOKO*\n"
+            "─────────────────────────\n"
+            "Bot siap membantu operasional toko Anda hari ini:\n"
+            "• Terima & proses pesanan masuk\n"
+            "• Pantau antrean & tahapan cucian (`/admin`)\n"
+            "• Tanya Asisten Cerdas toko apa saja (`/tanya`)\n\n"
+            "Silakan pilih menu khusus di bawah ini:"
+        )
+    else:
+        welcome_text = (
+            f"Halo, *{user_name}*! 👋 Selamat datang di *FreshClean Laundry* 🧺✨\n\n"
+            "Solusi cucian bersih, wangi, higienis, dan rapi tanpa repot! "
+            "Kami melayani cuci kiloan, satuan (bed cover, jas, selimut), sepatu, hingga *layanan antar-jemput langsung ke rumah/kost Anda*.\n\n"
+            "Silakan pilih menu di bawah ini untuk melihat daftar tarif atau langsung pesan penjemputan cucian:\n\n"
+            "💡 *Tips:* Anda bisa klik tombol menu di keyboard bawah layar kapan saja tanpa perlu mengetik!"
+        )
+
+    # Aktifkan tombol keyboard cepat di layar bawah sesuai role
     bot.send_message(
         message.chat.id,
-        "✨ _Tombol Menu Cepat aktif di bawah layar Anda._",
+        "✨ _Menu navigasi telah disesuaikan._",
         parse_mode="Markdown",
-        reply_markup=persistent_menu_markup()
+        reply_markup=persistent_menu_markup(is_admin=is_admin)
     )
     # Kirim menu utama interaktif
     bot.send_message(
         message.chat.id, 
         welcome_text, 
         parse_mode="Markdown", 
-        reply_markup=main_menu()
+        reply_markup=main_menu(is_admin=is_admin)
     )
 
 @bot.message_handler(commands=['order', 'pesan'])
@@ -439,14 +472,36 @@ def callback_listener(call):
 
     # 1. Menu Utama
     if call.data == "menu_utama":
+        is_adm = (chat_id == ADMIN_CHAT_ID)
         welcome_text = "Silakan pilih layanan yang Anda butuhkan di bawah ini:"
         bot.edit_message_text(
             welcome_text,
             chat_id=chat_id,
             message_id=message_id,
             parse_mode="Markdown",
-            reply_markup=main_menu()
+            reply_markup=main_menu(is_admin=is_adm)
         )
+
+    # Handler tombol khusus admin dari menu utama
+    elif call.data == "buka_panel_admin":
+        if chat_id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "⛔ Khusus Admin Toko", show_alert=True)
+            return
+        bot.answer_callback_query(call.id)
+        admin_panel_handler(call.message)
+
+    elif call.data == "buka_asisten_admin":
+        if chat_id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "⛔ Khusus Admin Toko", show_alert=True)
+            return
+        bot.answer_callback_query(call.id)
+        msg = bot.send_message(
+            chat_id,
+            "💬 *Halo Admin FreshClean!* 🤖\n\n"
+            "Ketik pertanyaan apa saja untuk Asisten Toko (misal: cari pelanggan, cek noda, omset, atau template WA):",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, step_admin_tanya)
 
     # 2. Menu Tarif & Layanan
     elif call.data == "menu_tarif":
