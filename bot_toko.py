@@ -182,6 +182,7 @@ def setup_bot_commands():
             types.BotCommand("order", "🛵 Pesan Laundry / Jemput Cucian"),
             types.BotCommand("tarif", "🧺 Daftar Layanan & Tarif"),
             types.BotCommand("cekpesanan", "🔍 Cek Status Pengerjaan Cucian"),
+            types.BotCommand("tanya", "🤖 Tanya Asisten Cerdas AI / CS"),
             types.BotCommand("myid", "🆔 ID Telegram Saya"),
         ]
         bot.set_my_commands(commands)
@@ -1083,31 +1084,52 @@ def cek_pesanan_command(message):
 
 
 # ==========================================
-# ASISTEN PINTAR KHUSUS ADMIN (/tanya & CHAT LANGSUNG)
+# ASISTEN PINTAR AI UNTUK ADMIN & PELANGGAN (/tanya & CHAT LANGSUNG)
 # ==========================================
-def call_gemini_ai(query, admin_name):
+def call_gemini_ai(query, user_name, is_admin=False):
     """Memanggil Google Gemini REST API jika GEMINI_API_KEY telah diatur"""
     if not GEMINI_API_KEY:
         return None
     try:
-        total_orders = len(all_orders)
-        active_orders = [o for o in all_orders.values() if o.get("status") not in ["selesai", "dibatalkan"]]
-        sample_list = []
-        for o in active_orders[:8]:
-            sample_list.append(f"- Nota: {o.get('order_id')} | Pelanggan: {o.get('nama')} | HP: {o.get('hp')} | Paket: {o.get('layanan')} | Status: {o.get('status')}")
-        sample_text = "\n".join(sample_list) if sample_list else "Tidak ada antrean cucian aktif."
+        if is_admin:
+            total_orders = len(all_orders)
+            active_orders = [o for o in all_orders.values() if o.get("status") not in ["selesai", "dibatalkan"]]
+            sample_list = []
+            for o in active_orders[:8]:
+                sample_list.append(f"- Nota: {o.get('order_id')} | Pelanggan: {o.get('nama')} | HP: {o.get('hp')} | Paket: {o.get('layanan')} | Status: {o.get('status')}")
+            sample_text = "\n".join(sample_list) if sample_list else "Tidak ada antrean cucian aktif."
 
-        prompt_system = (
-            f"Kamu adalah Asisten Pintar Pribadi untuk Pemilik/Admin FreshClean Laundry (bernama {admin_name}).\n"
-            "Tugasmu membantu pemilik laundry mengelola bisnis, menganalisis data pesanan, memberikan tips operasional laundry (cara penanganan noda membandel, takaran deterjen, pemilihan parfum, SOP cuci/setrika), membuat draft pesan WhatsApp untuk pelanggan, atau memberikan strategi bisnis laundry.\n"
-            "Jawablah dengan bahasa Indonesia yang ramah, profesional, ringkas, dan jelas menggunakan format Markdown Telegram (*bold*, _italic_, bullet points).\n\n"
-            f"Data Usaha Laundry Saat Ini:\n"
-            f"- Total seluruh nota tersimpan: {total_orders}\n"
-            f"- Pesanan yang sedang aktif/berjalan: {len(active_orders)}\n"
-            f"- Antrean Aktif Terkini:\n{sample_text}\n"
-            "- Layanan & Tarif: Kiloan Reguler Rp 7.000/kg (2 Hari), Kilat Express Rp 10.000/kg (24 Jam), Super Express Rp 15.000/kg (6 Jam), Bed Cover Single Rp 20.000, Jumbo Rp 30.000, Cuci Sepatu Deep Clean Rp 25.000 - Rp 35.000.\n\n"
-            f"Pertanyaan Pemilik/Admin:\n{query}"
-        )
+            prompt_system = (
+                f"Kamu adalah Asisten AI Bisnis Khusus untuk Pemilik/Admin FreshClean Laundry (bernama {user_name}).\n"
+                "Tugasmu membantu pemilik laundry menganalisis pesanan, menjawab pertanyaan operasional (penanganan noda, deterjen, parfum, SOP pengerjaan), membuat draft pesan WhatsApp untuk pelanggan, atau memberikan strategi bisnis laundry.\n"
+                "Jawablah dengan bahasa Indonesia yang ramah, profesional, ringkas, dan jelas menggunakan format Markdown Telegram (*bold*, _italic_, bullet points).\n\n"
+                f"Data Usaha Laundry Saat Ini:\n"
+                f"- Total seluruh nota tersimpan: {total_orders}\n"
+                f"- Pesanan yang sedang aktif/berjalan: {len(active_orders)}\n"
+                f"- Antrean Aktif Terkini:\n{sample_text}\n"
+                "- Layanan & Tarif: Kiloan Reguler Rp 7.000/kg (2 Hari), Kilat Express Rp 10.000/kg (24 Jam), Super Express Rp 15.000/kg (6 Jam), Bed Cover Single Rp 20.000, Jumbo Rp 30.000, Cuci Sepatu Deep Clean Rp 25.000 - Rp 35.000.\n\n"
+                f"Pertanyaan Pemilik/Admin:\n{query}"
+            )
+        else:
+            prompt_system = (
+                f"Kamu adalah Asisten Cerdas & Customer Service (CS) Resmi FreshClean Laundry yang bertugas melayani pelanggan bernama {user_name}.\n"
+                "Jawablah semua pertanyaan pelanggan dengan sangat ramah, hangat, sopan, membantu, solutif, dan informatif menggunakan bahasa Indonesia yang baik.\n"
+                "Gunakan format Markdown Telegram (*bold*, _italic_, bullet points).\n\n"
+                "Informasi Lengkap FreshClean Laundry:\n"
+                "• Cuci Kiloan: Reguler Rp 7.000/kg (2 hari), Express 24 Jam Rp 10.000/kg (1 hari), Super Express 6 Jam Selesai Rp 15.000/kg, Cuci Kering Lipat Rp 5.000/kg, Setrika Uap Saja Rp 4.500/kg.\n"
+                "• Cuci Satuan: Bed Cover Single Rp 20.000, Double/Jumbo Rp 30.000, Selimut Tebal Rp 18.000, Jas/Blazer Rp 25.000, Karpet/Gorden Rp 15.000-25.000/m².\n"
+                "• Cuci Sepatu & Tas: Sneakers/Flat shoes Rp 25.000, Deep clean & unyellowing Rp 35.000, Tas/Ransel Rp 20.000-35.000.\n"
+                "• Layanan Antar-Jemput: GRATIS untuk radius 3 km (minimal order 5 kg). Melayani antar-jemput hingga radius 10 km dari outlet.\n"
+                "• Jam Operasional Outlet: Senin - Sabtu 07.30 - 21.00 WIB, Minggu & Libur 08.00 - 20.00 WIB.\n"
+                "• Alamat Outlet: Jl. Melati Raya No. 45, Kecamatan Sukajadi.\n"
+                "• Metode Pembayaran: QRIS (semua e-wallet / mobile banking), Transfer Bank BCA, atau Bayar Tunai (COD) saat kurir mengantar cucian.\n"
+                "• Keunggulan Kami: 1 mesin 1 pelanggan (higienis dan tidak dicampur pakaian orang lain), deterjen ramah serat kain, 4 aroma parfum mewah tahan lama (Snappy, Sweet Lily, Ocean Fresh, Lavender), garansi cuci ulang gratis jika kurang bersih.\n"
+                "• Cara Order: Pelanggan bisa klik tombol '🛵 Pesan Laundry' atau ketik /order.\n"
+                "• Cek Cucian: Pelanggan bisa mengecek status cuciannya dengan mengetik /cekpesanan atau memasukkan nomor nota (misal LDR-1234).\n"
+                "• Kamu juga sangat pintar menjawab tips seputar perawatan kain, bahan pakaian, atau tips menghilangkan noda rumahan jika pelanggan bertanya.\n"
+                "• PENTING: Jaga kerahasiaan dan privasi data pelanggan lain (jangan berikan nomor HP atau alamat pelanggan lain).\n\n"
+                f"Pertanyaan Pelanggan:\n{query}"
+            )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {
@@ -1126,67 +1148,202 @@ def call_gemini_ai(query, admin_name):
         return None
 
 
-def smart_local_assistant(query, admin_name):
-    """Mesin asisten cerdas bawaan offline jika tanpa API Key Gemini"""
+def smart_local_assistant(query, user_name, is_admin=False):
+    """Mesin pengetahuan cerdas bawaan untuk Admin dan Pelanggan"""
     q = query.lower()
 
-    # 1. PENCARIAN PESANAN / PELANGGAN
-    matched = []
-    for oid, o in all_orders.items():
-        o_name = o.get("nama", "").lower()
-        o_hp = o.get("hp", "").lower()
-        o_id = oid.lower()
-        if (o_id in q or 
-            (len(q) >= 3 and q in o_name) or 
-            (len(q) >= 4 and q in o_hp) or
-            any(w in o_name for w in q.split() if len(w) > 3)):
-            matched.append(o)
+    # ======================================
+    # JIKA PENANYA ADALAH ADMIN TOKO
+    # ======================================
+    if is_admin:
+        # 1. PENCARIAN PESANAN / PELANGGAN
+        matched = []
+        for oid, o in all_orders.items():
+            o_name = o.get("nama", "").lower()
+            o_hp = o.get("hp", "").lower()
+            o_id = oid.lower()
+            if (o_id in q or 
+                (len(q) >= 3 and q in o_name) or 
+                (len(q) >= 4 and q in o_hp) or
+                any(w in o_name for w in q.split() if len(w) > 3)):
+                matched.append(o)
 
-    if ("cari" in q or "cek" in q or "nota" in q or "pelanggan" in q or "nama" in q) and matched:
-        res = f"🔍 *Hasil Pencarian untuk:* _{query}_\n─────────────────────────\n"
-        for o in matched[:5]:
-            st = STATUS_LIST.get(o.get('status', ''), o.get('status', ''))
-            res += (
-                f"🆔 *Nota:* `{o.get('order_id')}`\n"
-                f"👤 *Nama:* {o.get('nama')}\n"
-                f"📱 *WA:* `{o.get('hp')}`\n"
-                f"🧺 *Layanan:* {o.get('layanan')} ({o.get('estimasi', '-')})\n"
-                f"📍 *Alamat:* {o.get('alamat')}\n"
-                f"📊 *Status:* {st}\n"
-                f"⏱️ *Waktu:* {o.get('waktu')}\n"
+        if ("cari" in q or "cek" in q or "nota" in q or "pelanggan" in q or "nama" in q) and matched:
+            res = f"🔍 *Hasil Pencarian untuk:* _{query}_\n─────────────────────────\n"
+            for o in matched[:5]:
+                st = STATUS_LIST.get(o.get('status', ''), o.get('status', ''))
+                res += (
+                    f"🆔 *Nota:* `{o.get('order_id')}`\n"
+                    f"👤 *Nama:* {o.get('nama')}\n"
+                    f"📱 *WA:* `{o.get('hp')}`\n"
+                    f"🧺 *Layanan:* {o.get('layanan')} ({o.get('estimasi', '-')})\n"
+                    f"📍 *Alamat:* {o.get('alamat')}\n"
+                    f"📊 *Status:* {st}\n"
+                    f"⏱️ *Waktu:* {o.get('waktu')}\n"
+                    "─────────────────────────\n"
+                )
+            return res
+
+        # 2. STATUS ANTREAN & PESANAN AKTIF
+        if any(k in q for k in ["antre", "antri", "belum selesai", "belum diambil", "belum diantar", "siapa saja", "siapa yang", "proses", "dicuci", "setrika"]):
+            active = [o for o in all_orders.values() if o.get("status") not in ["selesai", "dibatalkan"]]
+            if not active:
+                return "🎉 *Alhamdulillah, semua cucian telah selesai!* Tidak ada cucian yang menumpuk di antrean saat ini."
+            res = f"🧺 *Daftar Cucian yang Sedang Diproses ({len(active)} Pesanan):*\n─────────────────────────\n"
+            for o in active[:10]:
+                st = STATUS_LIST.get(o.get('status', ''), o.get('status', ''))
+                res += f"• `{o.get('order_id')}` | *{o.get('nama')}*\n  └ {o.get('layanan')}\n  └ Status: _{st}_\n  └ WA: `{o.get('hp')}`\n"
+            return res
+
+        # 3. OMSET, PENDAPATAN & KEUANGAN
+        if any(k in q for k in ["omset", "omzet", "pendapatan", "keuangan", "penghasilan", "penjualan", "laba", "untung", "uang", "laporan"]):
+            total = len(all_orders)
+            selesai = sum(1 for o in all_orders.values() if o.get("status") == "selesai")
+            aktif = sum(1 for o in all_orders.values() if o.get("status") not in ["selesai", "dibatalkan"])
+            est_omset = selesai * 28000
+            return (
+                "💰 *RINGKASAN ESTIMASI PENDAPATAN & PESANAN*\n"
                 "─────────────────────────\n"
+                f"📦 Total Seluruh Nota Masuk : *{total} nota*\n"
+                f"✅ Pesanan Selesai          : *{selesai} nota*\n"
+                f"⏳ Pesanan Sedang Diproses  : *{aktif} nota*\n"
+                f"💵 Estimasi Pendapatan      : *± Rp {est_omset:,}*\n"
+                "─────────────────────────\n"
+                "💡 _Estimasi dihitung berdasarkan rata-rata Rp 28.000/nota dari pesanan yang selesai._"
             )
-        return res
 
-    # 2. STATUS ANTREAN & PESANAN AKTIF
-    if any(k in q for k in ["antre", "antri", "belum selesai", "belum diambil", "belum diantar", "siapa saja", "siapa yang", "proses", "dicuci", "setrika"]):
-        active = [o for o in all_orders.values() if o.get("status") not in ["selesai", "dibatalkan"]]
-        if not active:
-            return "🎉 *Alhamdulillah, semua cucian telah selesai!* Tidak ada cucian yang menumpuk di antrean saat ini."
-        res = f"🧺 *Daftar Cucian yang Sedang Diproses ({len(active)} Pesanan):*\n─────────────────────────\n"
-        for o in active[:10]:
-            st = STATUS_LIST.get(o.get('status', ''), o.get('status', ''))
-            res += f"• `{o.get('order_id')}` | *{o.get('nama')}*\n  └ {o.get('layanan')}\n  └ Status: _{st}_\n  └ WA: `{o.get('hp')}`\n"
-        return res
+        # 4. TEMPLATE PESAN WHATSAPP UNTUK ADMIN
+        if any(k in q for k in ["template", "pesan wa", "chat wa"]):
+            if any(k in q for k in ["jemput", "ambil"]):
+                return (
+                    "📝 *TEMPLATE CHAT WA: KONFIRMASI PENJEMPUTAN*\n\n"
+                    "```\nHalo Kak [Nama Pelanggan]! 👋\n"
+                    "Kami dari FreshClean Laundry. Kurir kami sedang menuju ke lokasi Anda untuk penjemputan cucian (ID: [No. Nota]).\n"
+                    "Mohon dipastikan pakaian kotor sudah siap ya Kak. Terima kasih! 🛵✨\n```"
+                )
+            elif any(k in q for k in ["tagihan", "total", "invoice", "bayar"]):
+                return (
+                    "📝 *TEMPLATE CHAT WA: RINCIAN TAGIHAN / TIMBANGAN*\n\n"
+                    "```\nHalo Kak [Nama Pelanggan]! 🧺\n"
+                    "Cucian Anda (Nota: [No. Nota]) sudah selesai ditimbang di outlet kami:\n"
+                    "• Berat Riil : [Contoh: 4.5 Kg]\n"
+                    "• Paket Layanan : Cuci Komplit Reguler\n"
+                    "• Total Tagihan : Rp [Contoh: 31.500]\n\n"
+                    "Pembayaran dapat ditransfer via QRIS / Rekening BCA: 123456789 a/n FreshClean.\n"
+                    "Terima kasih Kak! ✨\n```"
+                )
+            elif any(k in q for k in ["selesai", "siap", "antar"]):
+                return (
+                    "📝 *TEMPLATE CHAT WA: CUCIAN SIAP DIANTAR*\n\n"
+                    "```\nHalo Kak [Nama Pelanggan]! 🎉\n"
+                    "Kabar gembira, cucian Anda (Nota: [No. Nota]) sudah bersih, wangi, rapi, dan siap diantar kurir ke alamat Anda.\n"
+                    "Apakah Kakak ada di tempat sekarang? Terima kasih! 🛵🧺\n```"
+                )
 
-    # 3. OMSET, PENDAPATAN & KEUANGAN
-    if any(k in q for k in ["omset", "omzet", "pendapatan", "keuangan", "penghasilan", "penjualan", "laba", "untung", "uang", "laporan"]):
-        total = len(all_orders)
-        selesai = sum(1 for o in all_orders.values() if o.get("status") == "selesai")
-        aktif = sum(1 for o in all_orders.values() if o.get("status") not in ["selesai", "dibatalkan"])
-        est_omset = selesai * 28000
-        return (
-            "💰 *RINGKASAN ESTIMASI PENDAPATAN & PESANAN*\n"
-            "─────────────────────────\n"
-            f"📦 Total Seluruh Nota Masuk : *{total} nota*\n"
-            f"✅ Pesanan Selesai          : *{selesai} nota*\n"
-            f"⏳ Pesanan Sedang Diproses  : *{aktif} nota*\n"
-            f"💵 Estimasi Pendapatan      : *± Rp {est_omset:,}*\n"
-            "─────────────────────────\n"
-            "💡 _Estimasi dihitung berdasarkan rata-rata Rp 28.000/nota dari pesanan yang selesai._"
-        )
+    # ======================================
+    # JIKA PENANYA ADALAH PELANGGAN (USER)
+    # ======================================
+    else:
+        # 1. PERTANYAAN TARIF / BIAYA
+        if any(k in q for k in ["harga", "tarif", "biaya", "berapa per kg", "kiloan", "ongkos", "bayar berapa", "price", "list harga"]):
+            return (
+                "🧺 *DAFTAR TARIF FRESHCLEAN LAUNDRY*\n"
+                "─────────────────────────\n"
+                "✨ *Layanan Cuci Kiloan (Cuci + Kering + Setrika + Parfum):*\n"
+                "• *Reguler (2 Hari):* Rp 7.000 / kg\n"
+                "• *Kilat Express (24 Jam):* Rp 10.000 / kg\n"
+                "• *Super Express (6 Jam Selesai):* Rp 15.000 / kg\n"
+                "• *Cuci Lipat Saja:* Rp 5.000 / kg\n"
+                "• *Setrika Uap Saja:* Rp 4.500 / kg\n\n"
+                "🛏️ *Layanan Satuan:*\n"
+                "• Bed Cover Single: Rp 20.000 | Jumbo: Rp 30.000\n"
+                "• Selimut Tebal: Rp 18.000 | Jas: Rp 25.000\n"
+                "• Cuci Sepatu Deep Clean: Rp 25.000 - Rp 35.000\n\n"
+                "🛵 *Gratis Antar-Jemput* untuk area radius 3 km (min. 5 kg)!"
+            )
 
-    # 4. TIPS MENANGANI NODA MEMBANDEL
+        # 2. PERTANYAAN DURASI / BERAPA LAMA
+        if any(k in q for k in ["berapa lama", "durasi", "kapan selesai", "express", "kilat", "cepat", "kapan jadi"]):
+            return (
+                "⏱️ *ESTIMASI WAKTU PENGERJAAN CUCIAN:*\n"
+                "─────────────────────────\n"
+                "• 🚀 *Super Express:* Selesai hanya dalam *6 Jam* (Rp 15.000/kg)\n"
+                "• ⚡ *Kilat Express:* Selesai dalam *24 Jam / 1 Hari* (Rp 10.000/kg)\n"
+                "• 👕 *Cuci Reguler:* Selesai dalam *2 Hari* (Rp 7.000/kg)\n"
+                "• 🛏️ *Bed Cover / Satuan:* 2 - 3 Hari pengerjaan rapi & kering sempurna.\n"
+                "• 👟 *Cuci Sepatu Deep Clean:* 2 - 3 Hari (dikeringkan tanpa merusak bahan)."
+            )
+
+        # 3. ANTAR-JEMPUT / RADIUS / ONGKIR
+        if any(k in q for k in ["antar", "jemput", "kurir", "radius", "ongkir", "lokasi jemput", "bisa jemput", "free ongkir"]):
+            return (
+                "🛵 *LAYANAN ANTAR-JEMPUT CUCIAN:*\n"
+                "─────────────────────────\n"
+                "Ya, tentu bisa! Kurir kami siap menjemput dan mengantar cucian langsung ke rumah, kost, atau kantor Anda.\n\n"
+                "• *Gratis Ongkir:* Radius sampai 3 km dari outlet kami (minimal cucian 5 kg).\n"
+                "• *Jangkauan Layanan:* Melayani hingga radius 10 km dari outlet.\n\n"
+                "Silakan klik tombol *🛵 Pesan Laundry* untuk mengisi alamat penjemputan!"
+            )
+
+        # 4. METODE PEMBAYARAN
+        if any(k in q for k in ["bayar", "qris", "transfer", "cash", "tunai", "cod", "dana", "gopay", "bca"]):
+            return (
+                "💳 *METODE PEMBAYARAN FRESHCLEAN LAUNDRY:*\n"
+                "─────────────────────────\n"
+                "Kami menerima berbagai metode pembayaran praktis:\n\n"
+                "1. 📲 *QRIS:* Scan dari semua aplikasi (BCA Mobile, Mandiri, GoPay, OVO, DANA, ShopeePay).\n"
+                "2. 🏦 *Transfer Bank:* Bank BCA a/n FreshClean Laundry.\n"
+                "3. 💵 *Tunai (COD):* Bayar langsung secara tunai saat kurir mengantar cucian bersih Anda."
+            )
+
+        # 5. JAM OPERASIONAL & LOKASI
+        if any(k in q for k in ["buka", "tutup", "jam", "alamat", "lokasi", "outlet", "maps", "dimana", "daerah"]):
+            return (
+                "📍 *LOKASI & JAM OPERASIONAL FRESHCLEAN:*\n"
+                "─────────────────────────\n"
+                "🏢 *Outlet:* Jl. Melati Raya No. 45, Kecamatan Sukajadi, Kota Anda\n\n"
+                "⏰ *Jam Buka & Operasional:*\n"
+                "• Senin - Sabtu : 07.30 - 21.00 WIB\n"
+                "• Minggu & Libur: 08.00 - 20.00 WIB\n\n"
+                "Kurir penjemputan cucian beroperasi setiap hari selama jam buka outlet!"
+            )
+
+        # 6. CUCI SEPATU & BED COVER
+        if any(k in q for k in ["sepatu", "sneakers", "tas", "bed cover", "selimut", "jas"]):
+            return (
+                "👟 *LAYANAN KHUSUS SEPATU, TAS & SATUAN:*\n"
+                "─────────────────────────\n"
+                "Kami melayani pencucian bahan khusus dengan perlakuan profesional:\n\n"
+                "• 👟 *Sepatu Sneakers / Kanvas:* Rp 25.000 / pasang\n"
+                "• 👟 *Deep Clean & Unyellowing Sepatu:* Rp 35.000 / pasang\n"
+                "• 🎒 *Tas / Ransel:* Rp 20.000 - Rp 35.000 / pcs\n"
+                "• 🛏️ *Bed Cover Single:* Rp 20.000 | *Double/Jumbo:* Rp 30.000\n"
+                "• 👔 *Jas / Blazer:* Rp 25.000 / pcs"
+            )
+
+        # 7. CARA PESAN
+        if any(k in q for k in ["cara pesan", "mau order", "gimana cara", "pesan laundry", "bisa cuci"]):
+            return (
+                "🛵 *CARA MUDAH MEMESAN LAUNDRY:*\n"
+                "─────────────────────────\n"
+                "1. Klik tombol *🛵 Pesan Laundry* di bawah atau ketik `/order`.\n"
+                "2. Pilih paket layanan (Reguler, Express, Sepatu, dll).\n"
+                "3. Masukkan nama, nomor WhatsApp, dan alamat penjemputan Anda.\n"
+                "4. Kurir kami akan segera mengonfirmasi dan meluncur menjemput pakaian kotor Anda!"
+            )
+
+        # 8. CEK STATUS NOTA
+        if any(k in q for k in ["cek nota", "cek status", "sudah jadi belum", "cucian saya", "lacak"]):
+            return (
+                "🔍 *CARA CEK STATUS PENGERJAAN CUCIAN:*\n"
+                "─────────────────────────\n"
+                "Ketik `/cekpesanan [Nomor_Nota]` (contoh: `/cekpesanan LDR-1234`), atau klik tombol *🔍 Cek Status Cucian* di menu utama.\n\n"
+                "Sistem kami akan langsung menampilkan apakah cucian Anda sedang dicuci, disetrika, atau siap diantar!"
+            )
+
+    # ======================================
+    # TIPS NODA (BERLAKU UNTUK ADMIN & PELANGGAN)
+    # ======================================
     if "darah" in q:
         return (
             "🩸 *TIPS PENANGANAN NODA DARAH:*\n"
@@ -1201,7 +1358,7 @@ def smart_local_assistant(query, admin_name):
             "─────────────────────────\n"
             "1. Taburkan bedak bayi atau tepung maizena di atas noda selama 15 menit untuk menyerap minyak.\n"
             "2. Oleskan sabun cuci piring pekat langsung tanpa air, diamkan 10 menit.\n"
-            "3. Kucek dengan air hangat sebelum dimasukkan ke mesin cuci."
+            "3. Kucek dengan air hangat sebelum dicuci di mesin."
         )
     if any(k in q for k in ["tinta", "pulpen", "spidol"]):
         return (
@@ -1233,145 +1390,128 @@ def smart_local_assistant(query, admin_name):
             "1. Beri perasan jeruk nipis dan taburan garam dapur pada noda karat.\n"
             "2. Jemur pakaian selama 15-20 menit, lalu sikat perlahan dan bilas air bersih."
         )
-    if "sepatu" in q:
+
+    # SALAM & RAMAH TAMAH
+    if any(k in q for k in ["halo", "hai", "pagi", "siang", "sore", "malam", "assalamualaikum"]):
         return (
-            "👟 *SOP CUCI SEPATU DEEP CLEAN:*\n"
-            "─────────────────────────\n"
-            "• Gunakan sikat bulu kuda untuk upper material (kanvas/suede).\n"
-            "• Gunakan sikat kaku untuk midsole & outsole.\n"
-            "• Hindari mencelupkan sepatu langsung ke air banyak.\n"
-            "• Jangan jemur sepatu di bawah terik matahari langsung agar outsole tidak menguning (_unyellowing_)."
+            f"Halo, Kak *{user_name}*! 👋 Ada yang bisa Asisten FreshClean Laundry bantu hari ini?\n\n"
+            "Anda bisa menanyakan tarif, durasi cuci, promo antar-jemput, atau langsung memesan cucian!"
         )
 
-    # 5. TEMPLATE PESAN WHATSAPP
-    if any(k in q for k in ["template", "pesan wa", "chat wa"]):
-        if any(k in q for k in ["jemput", "ambil"]):
-            return (
-                "📝 *TEMPLATE CHAT WA: KONFIRMASI PENJEMPUTAN*\n\n"
-                "```\nHalo Kak [Nama Pelanggan]! 👋\n"
-                "Kami dari FreshClean Laundry. Kurir kami sedang menuju ke lokasi Anda untuk penjemputan cucian (ID: [No. Nota]).\n"
-                "Mohon dipastikan pakaian kotor sudah siap ya Kak. Terima kasih! 🛵✨\n```"
-            )
-        elif any(k in q for k in ["tagihan", "total", "invoice", "bayar"]):
-            return (
-                "📝 *TEMPLATE CHAT WA: RINCIAN TAGIHAN / TIMBANGAN*\n\n"
-                "```\nHalo Kak [Nama Pelanggan]! 🧺\n"
-                "Cucian Anda (Nota: [No. Nota]) sudah selesai ditimbang di outlet kami:\n"
-                "• Berat Riil : [Contoh: 4.5 Kg]\n"
-                "• Paket Layanan : Cuci Komplit Reguler\n"
-                "• Total Tagihan : Rp [Contoh: 31.500]\n\n"
-                "Pembayaran dapat ditransfer via QRIS / Rekening BCA: 123456789 a/n FreshClean.\n"
-                "Terima kasih Kak! ✨\n```"
-            )
-        elif any(k in q for k in ["selesai", "siap", "antar"]):
-            return (
-                "📝 *TEMPLATE CHAT WA: CUCIAN SIAP DIANTAR*\n\n"
-                "```\nHalo Kak [Nama Pelanggan]! 🎉\n"
-                "Kabar gembira, cucian Anda (Nota: [No. Nota]) sudah bersih, wangi, rapi, dan siap diantar kurir ke alamat Anda.\n"
-                "Apakah Kakak ada di tempat sekarang? Terima kasih! 🛵🧺\n```"
-            )
-        else:
-            return (
-                "📝 *PILIHAN TEMPLATE CHAT WA:*\n"
-                "1. Ketik: _'template penjemputan cucian'_\n"
-                "2. Ketik: _'template rincian tagihan'_\n"
-                "3. Ketik: _'template cucian siap antar'_\n"
-                "4. Ketik: _'template permohonan maaf keterlambatan'_"
-            )
+    if any(k in q for k in ["terima kasih", "makasih", "thanks", "ok", "oke"]):
+        return f"Sama-sama, Kak *{user_name}*! Senang bisa membantu Anda. Jika ada cucian kotor, FreshClean Laundry siap melayani dengan bersih dan wangi! 🧺✨"
 
-    # 6. JAWABAN UMUM & MENU BANTUAN
-    return (
-        f"🤖 *Halo Bos {admin_name}!* Saya Asisten Cerdas FreshClean Laundry.\n\n"
-        "Saya siap membantu operasional toko Anda. Coba tanyakan hal berikut:\n"
-        "• _'Siapa saja yang cuciannya belum selesai?'_\n"
-        "• _'Cari pesanan nama [Nama Pelanggan]'_\n"
-        "• _'Berapa omset dan total pesanan saat ini?'_\n"
-        "• _'Bagaimana cara menghilangkan noda minyak / darah / jamur?'_\n"
-        "• _'Buatkan template chat WhatsApp konfirmasi penjemputan'_\n\n"
-        "💡 *Tips AI:* Anda dapat menyetel `GEMINI_API_KEY` di pengaturan bot jika ingin saya menjawab pertanyaan bebas apapun dengan kecerdasan AI Google Gemini!"
-    )
+    # DEFAULT FALLBACK
+    if is_admin:
+        return (
+            f"🤖 *Halo Bos {user_name}!* Saya Asisten Toko FreshClean Laundry.\n\n"
+            "Saya siap membantu operasional toko. Coba tanyakan hal berikut:\n"
+            "• _'Siapa saja yang cuciannya belum selesai?'_\n"
+            "• _'Cari pesanan nama Fadhel'_\n"
+            "• _'Berapa omset dan total pesanan saat ini?'_\n"
+            "• _'Bagaimana cara membersihkan noda minyak / darah / jamur?'_\n"
+            "• _'Buatkan template chat WhatsApp konfirmasi penjemputan'_\n\n"
+            "💡 *Tips:* Pasang `GEMINI_API_KEY` di pengaturan bot untuk kecerdasan AI Google Gemini tanpa batas!"
+        )
+    else:
+        return (
+            f"🤖 *Halo Kak {user_name}!* Selamat datang di layanan bantuan FreshClean Laundry.\n\n"
+            "Silakan tanyakan apa saja seputar cucian Anda, misalnya:\n"
+            "• _'Berapa harga cuci kiloan reguler & express?'_\n"
+            "• _'Berapa lama proses cuci selesai?'_\n"
+            "• _'Apakah bisa antar jemput ke rumah saya?'_\n"
+            "• _'Berapa tarif cuci bed cover atau sepatu?'_\n"
+            "• _'Bisa bayar pakai apa saja?'_\n\n"
+            "Atau pilih tombol menu di bawah untuk langsung memesan layanan kami:"
+        )
 
 
-def process_admin_query(message, query):
-    """Memproses pertanyaan admin dan mengirimkan balasan cerdas"""
+def process_query(message, query, is_admin=False):
+    """Memproses pertanyaan dari Admin atau Pelanggan dan memberikan balasan cerdas"""
     chat_id = message.chat.id
-    admin_name = message.from_user.first_name or "Bos"
+    user_name = message.from_user.first_name or ("Bos" if is_admin else "Kakak")
 
     try:
         bot.send_chat_action(chat_id, "typing")
     except Exception:
         pass
 
-    # 1. Coba via Gemini AI jika API Key ada
-    answer = call_gemini_ai(query, admin_name)
+    # 1. Coba panggil Gemini AI jika API Key ada
+    answer = call_gemini_ai(query, user_name, is_admin=is_admin)
 
-    # 2. Jika tanpa API Key atau offline, gunakan asisten cerdas lokal
+    # 2. Jika tanpa API Key atau offline, gunakan mesin pengetahuan cerdas lokal
     if not answer:
-        answer = smart_local_assistant(query, admin_name)
+        answer = smart_local_assistant(query, user_name, is_admin=is_admin)
 
-    bot.reply_to(message, answer, parse_mode="Markdown")
+    # Jika pelanggan yang bertanya, sertakan tombol aksi cepat di bawah jawaban
+    if not is_admin:
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btn_order = types.InlineKeyboardButton("🛵 Pesan Laundry", callback_data="mulai_order")
+        btn_tarif = types.InlineKeyboardButton("🧺 Daftar Tarif", callback_data="menu_tarif")
+        btn_menu = types.InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_utama")
+        markup.add(btn_order, btn_tarif)
+        markup.add(btn_menu)
+        bot.reply_to(message, answer, parse_mode="Markdown", reply_markup=markup)
+    else:
+        bot.reply_to(message, answer, parse_mode="Markdown")
 
 
 @bot.message_handler(commands=['tanya', 'ai', 'ask'])
-def tanya_admin_command(message):
-    """Perintah khusus admin untuk bertanya kepada Asisten Bot"""
+def tanya_command(message):
+    """Perintah untuk bertanya ke Asisten Bot (bisa diakses oleh Admin maupun Pelanggan)"""
     chat_id = message.chat.id
-    if chat_id != ADMIN_CHAT_ID:
-        bot.reply_to(
-            message,
-            "⛔ *Akses Ditolak!*\n"
-            "Fitur asisten cerdas ini hanya dapat diakses oleh Pemilik / Admin Resmi FreshClean Laundry.",
-            parse_mode="Markdown"
-        )
-        return
-
+    is_admin = (chat_id == ADMIN_CHAT_ID)
     parts = message.text.strip().split(maxsplit=1)
+
     if len(parts) >= 2:
         query = parts[1]
-        process_admin_query(message, query)
+        process_query(message, query, is_admin=is_admin)
     else:
-        msg = bot.reply_to(
-            message,
-            "💬 *Halo Admin FreshClean!* 🤖\n\n"
-            "Silakan ketik pertanyaan apa saja yang ingin Anda tanyakan ke Asisten Toko.\n"
-            "Contoh:\n"
-            "• _'Siapa saja yang cuciannya belum selesai?'_\n"
-            "• _'Cari pesanan nama Fadhel'_\n"
-            "• _'Bagaimana cara membersihkan noda oli di baju putih?'_\n"
-            "• _'Berapa estimasi omset dan antrean saat ini?'_\n\n"
-            "_(Ketik pertanyaan Anda sekarang)_",
-            parse_mode="Markdown"
-        )
-        bot.register_next_step_handler(msg, step_admin_tanya)
+        if is_admin:
+            prompt_text = (
+                "💬 *Halo Admin FreshClean!* 🤖\n\n"
+                "Silakan ketik pertanyaan apa saja untuk Asisten Toko.\n"
+                "Contoh:\n"
+                "• _'Siapa saja yang cuciannya belum selesai?'_\n"
+                "• _'Cari pesanan nama Fadhel'_\n"
+                "• _'Bagaimana cara membersihkan noda oli di baju putih?'_\n"
+                "• _'Berapa estimasi omset dan antrean saat ini?'_\n\n"
+                "_(Ketik pertanyaan Anda sekarang)_"
+            )
+        else:
+            prompt_text = (
+                "💬 *Halo Kak! Ada yang bisa kami bantu?* 🤖✨\n\n"
+                "Silakan ketik pertanyaan Anda seputar layanan FreshClean Laundry.\n"
+                "Contoh pertanyaan:\n"
+                "• _'Berapa harga cuci kiloan express?'_\n"
+                "• _'Bisa antar jemput ke daerah Sukajadi?'_\n"
+                "• _'Berapa lama proses cuci sepatu deep clean?'_\n"
+                "• _'Bisa bayar pakai QRIS atau transfer?'_\n\n"
+                "_(Ketik pertanyaan Anda sekarang)_"
+            )
+
+        msg = bot.reply_to(message, prompt_text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, step_user_tanya)
 
 
-def step_admin_tanya(message):
-    """Handler langkah berikutnya untuk pertanyaan admin"""
+def step_user_tanya(message):
+    """Handler langkah berikutnya untuk pertanyaan pengguna"""
     if is_cancelled(message):
         bot.send_message(message.chat.id, "Sesi tanya jawab ditutup.", reply_markup=main_menu())
         return
-    process_admin_query(message, message.text.strip())
+    is_admin = (message.chat.id == ADMIN_CHAT_ID)
+    process_query(message, message.text.strip(), is_admin=is_admin)
 
 
 @bot.message_handler(func=lambda msg: True, content_types=['text'])
 def default_message_router(message):
-    """Router pesan teks: Menjawab pertanyaan admin jika Admin yang chat, atau mengarahkan pelanggan"""
+    """Router pesan teks: Menjawab semua pertanyaan pengguna (Admin & Pelanggan) secara cerdas"""
     chat_id = message.chat.id
     text = (message.text or "").strip()
+    is_admin = (chat_id == ADMIN_CHAT_ID)
 
-    # Jika pengirim adalah ADMIN dan tidak sedang mengisi form order, perlakukan sebagai pertanyaan ke Asisten
-    if chat_id == ADMIN_CHAT_ID:
-        process_admin_query(message, text)
-        return
-
-    # Jika pelanggan biasa mengirim teks acak, arahkan ke menu utama
-    bot.send_message(
-        chat_id,
-        "Halo! 👋 Ada yang bisa kami bantu seputar cucian Anda di *FreshClean Laundry*?\n\n"
-        "Silakan gunakan menu interaktif di bawah untuk melihat tarif, order jemput cucian, atau cek nota:",
-        parse_mode="Markdown",
-        reply_markup=main_menu()
-    )
+    # Proses pertanyaan secara otomatis dengan AI
+    process_query(message, text, is_admin=is_admin)
 
 
 def start_dummy_server():
