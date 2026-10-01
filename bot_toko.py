@@ -167,8 +167,16 @@ def persistent_menu_markup(is_admin=False):
     return markup
 
 def setup_bot_commands():
-    """Mendaftarkan tombol menu perintah Telegram (/start, dll) ke server Telegram agar muncul tombol Menu resmi"""
+    """Mendaftarkan tombol menu perintah dan identitas bot (Nama & Deskripsi Laundry) ke Telegram"""
     try:
+        # Atur Nama & Deskripsi Bot agar sesuai FreshClean Laundry
+        try:
+            bot.set_my_name(name="FreshClean Laundry Bot 🧺")
+            bot.set_my_description(description="🧺 Selamat datang di FreshClean Laundry!\n\nLayanan cuci kiloan, satuan (bed cover, jas, selimut), sepatu, dan tas. Dilengkapi layanan antar-jemput cepat langsung ke rumah atau kost Anda!\n\nKlik START untuk melihat daftar tarif atau memesan.")
+            bot.set_my_short_description(short_description="🧺 Bot resmi FreshClean Laundry. Cuci Kiloan, Satuan & Antar-Jemput Praktis!")
+        except Exception:
+            pass
+
         commands = [
             types.BotCommand("start", "🚀 Mulai / Menu Utama"),
             types.BotCommand("order", "🛵 Pesan Laundry / Jemput Cucian"),
@@ -181,7 +189,7 @@ def setup_bot_commands():
             bot.set_chat_menu_button(menu_button=types.MenuButtonCommands(type="commands"))
         except Exception:
             pass
-        print("[INFO] Menu tombol perintah Telegram (/start, dll) berhasil didaftarkan.", flush=True)
+        print("[INFO] Identitas bot dan menu perintah Telegram berhasil didaftarkan.", flush=True)
     except Exception as e:
         print(f"[WARN] Gagal mendaftarkan menu perintah bot: {e}", flush=True)
 
