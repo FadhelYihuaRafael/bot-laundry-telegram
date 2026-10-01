@@ -28,8 +28,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8925512883:AAHvOTZmJ0i0WOgvmO6KGYfWqrbmCBuuQ
 # PIN Rahasia untuk mendaftarkan/mengubah akun Admin (Bisa diubah lewat env atau langsung di sini)
 ADMIN_PIN = os.getenv("ADMIN_PIN", "freshclean88")
 
-# API Key untuk Google Gemini AI (Opsional: jika diisi, bot bisa menjawab pertanyaan apapun secara cerdas tanpa batas)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# API Key untuk Google Gemini AI (Terintegrasi resmi untuk kecerdasan AI Admin & Pelanggan)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6IF2W2zj9UGPaPSvzZmny0dcpzKGaldlgUdcwhfbd3r6A")
 
 # File untuk menyimpan ID Admin agar tidak hilang saat bot restart
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "admin_config.json")
@@ -1131,18 +1131,27 @@ def call_gemini_ai(query, user_name, is_admin=False):
                 f"Pertanyaan Pelanggan:\n{query}"
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        models_to_try = ["gemini-3-flash-preview", "gemini-3.8-flash", "gemini-flash-latest"]
         payload = {
             "contents": [{"parts": [{"text": prompt_system}]}],
             "generationConfig": {"temperature": 0.7, "maxOutputTokens": 800}
         }
         data_json = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data_json, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=12) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            candidate = result.get("candidates", [])[0]
-            answer = candidate.get("content", {}).get("parts", [])[0].get("text", "")
-            return answer.strip()
+
+        for model in models_to_try:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+                req = urllib.request.Request(url, data=data_json, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=12) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                    candidate = result.get("candidates", [])[0]
+                    answer = candidate.get("content", {}).get("parts", [])[0].get("text", "")
+                    if answer:
+                        return answer.strip()
+            except Exception:
+                continue
+
+        return None
     except Exception as e:
         print(f"[WARN] Gemini AI gagal dipanggil: {e}", flush=True)
         return None

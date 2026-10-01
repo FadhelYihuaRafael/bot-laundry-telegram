@@ -8,3 +8,5 @@ services:
     envVars:
       - key: PORT
         value: 10000
+      - key: GEMINI_API_KEY
+        value: AQ.Ab8RN6IF2W2zj9UGPaPSvzZmny0dcpzKGaldlgUdcwhfbd3r6A
