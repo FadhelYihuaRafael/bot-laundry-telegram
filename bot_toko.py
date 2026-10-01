@@ -901,6 +901,11 @@ def cek_pesanan_command(message):
 
 def start_dummy_server():
     """Server web mini agar bot dapat di-hosting gratis di layanan cloud (seperti Render.com)"""
+    # Hanya dijalankan di cloud server (Render otomatis menyediakan variabel PORT / RENDER)
+    port_str = os.environ.get("PORT")
+    if not port_str and not os.environ.get("RENDER"):
+        return
+
     try:
         class HealthCheckHandler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -912,7 +917,7 @@ def start_dummy_server():
             def log_message(self, format, *args):
                 return
 
-        port = int(os.environ.get("PORT", 8080))
+        port = int(port_str or 10000)
         server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -941,6 +946,7 @@ if __name__ == "__main__":
     print(f"Tekan Ctrl + C di terminal untuk menghentikan bot.", flush=True)
     print(f"==================================================", flush=True)
     try:
-        bot.infinity_polling()
+        # skip_pending=True mencegah error query lama/kadaluarsa saat bot baru dinyalakan
+        bot.infinity_polling(skip_pending=True)
     except Exception as e:
         print(f"[ERROR] Terjadi kesalahan: {e}", flush=True)
