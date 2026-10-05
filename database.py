@@ -4,6 +4,9 @@ import csv
 import io
 import threading
 from datetime import datetime
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 from config import ORDERS_FILE, CONFIG_FILE, STATUS_LIST
 
 orders_lock = threading.Lock()
@@ -140,3 +143,200 @@ def export_orders_csv():
     
     output.seek(0)
     return output.getvalue().encode("utf-8-sig")
+
+def export_orders_excel():
+    """Menghasilkan file Excel (.xlsx) rapi dan berformat akuntansi resmi untuk owner/admin"""
+    orders = load_orders()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Rekap Laundry"
+    ws.views.sheetView[0].showGridLines = True
+
+    # 1. Judul Banner Atas
+    ws.merge_cells("A1:O1")
+    title_cell = ws["A1"]
+    title_cell.value = "REKAPITULASI PEMBUKUAN & PESANAN - FRESHCLEAN LAUNDRY"
+    title_cell.font = Font(name="Segoe UI", size=14, bold=True, color="FFFFFF")
+    title_cell.fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 34
+
+    # Subtitle
+    total_orders = len(orders)
+    total_omset = sum(int(o.get("total_bayar", 0)) for o in orders.values() if isinstance(o.get("total_bayar"), (int, float)))
+    now_str = datetime.now().strftime("%d-%m-%Y %H:%M WIB")
+
+    ws.merge_cells("A2:O2")
+    sub_cell = ws["A2"]
+    sub_cell.value = f"Dicetak Otomatis pada: {now_str}  |  Total Pesanan: {total_orders} Nota  |  Total Omset: Rp {total_omset:,}"
+    sub_cell.font = Font(name="Segoe UI", size=10, italic=True, color="1E293B")
+    sub_cell.fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+    sub_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 22
+    ws.row_dimensions[3].height = 8
+
+    # 2. Header Kolom
+    headers = [
+        "No.", "ID Nota", "Tanggal & Waktu", "Nama Pelanggan", "No. WhatsApp",
+        "Layanan Laundry", "Estimasi", "Berat Riil", "Tagihan (Rp)",
+        "Status Bayar", "Tahapan Cucian", "Metode Antar/Jemput",
+        "Alamat / Titik GPS", "Catatan Khusus", "Rating ⭐"
+    ]
+    ws.row_dimensions[4].height = 28
+
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border_side = Side(border_style="thin", color="CBD5E1")
+    header_border = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
+
+    for col_num, h_text in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=col_num)
+        cell.value = h_text
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+        cell.border = header_border
+
+    # 3. Data Baris
+    cell_border = Border(
+        left=Side(style="thin", color="E2E8F0"),
+        right=Side(style="thin", color="E2E8F0"),
+        top=Side(style="thin", color="E2E8F0"),
+        bottom=Side(style="thin", color="E2E8F0")
+    )
+    fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    fill_alt = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+
+    fill_lunas = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    font_lunas = Font(name="Segoe UI", size=10, bold=True, color="166534")
+
+    fill_pending = PatternFill(start_color="FEF9C3", end_color="FEF9C3", fill_type="solid")
+    font_pending = Font(name="Segoe UI", size=10, bold=True, color="854D0E")
+
+    fill_batal = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    font_batal = Font(name="Segoe UI", size=10, bold=True, color="991B1B")
+
+    row_idx = 5
+    sorted_orders = sorted(orders.values(), key=lambda x: x.get("waktu", ""), reverse=True)
+
+    for idx, o in enumerate(sorted_orders, 1):
+        ws.row_dimensions[row_idx].height = 22
+        current_fill = fill_alt if idx % 2 == 0 else fill_white
+        st_raw = o.get("status", "menunggu")
+        st_label = STATUS_LIST.get(st_raw, st_raw)
+        st_bayar = o.get("status_bayar", "Belum Lunas")
+        tagihan_val = int(o.get("total_bayar", 0)) if str(o.get("total_bayar", 0)).isdigit() else 0
+        rating_str = f"⭐ {o.get('rating')}/5" if o.get("rating") else "-"
+
+        # Values
+        vals = [
+            (idx, Alignment(horizontal="center", vertical="center")),
+            (o.get("order_id", "-"), Alignment(horizontal="center", vertical="center")),
+            (o.get("waktu", "-"), Alignment(horizontal="center", vertical="center")),
+            (o.get("nama", "-"), Alignment(horizontal="left", vertical="center")),
+            (str(o.get("hp", "-")), Alignment(horizontal="center", vertical="center")),
+            (o.get("layanan", o.get("produk", "-")), Alignment(horizontal="left", vertical="center")),
+            (o.get("estimasi", "-"), Alignment(horizontal="center", vertical="center")),
+            (o.get("berat_riil", "-") or "-", Alignment(horizontal="center", vertical="center")),
+            (tagihan_val, Alignment(horizontal="right", vertical="center")),
+            (st_bayar, Alignment(horizontal="center", vertical="center")),
+            (st_label, Alignment(horizontal="center", vertical="center")),
+            (o.get("metode", "-"), Alignment(horizontal="center", vertical="center")),
+            (o.get("alamat", "-"), Alignment(horizontal="left", vertical="center")),
+            (o.get("catatan", "-"), Alignment(horizontal="left", vertical="center")),
+            (rating_str, Alignment(horizontal="center", vertical="center"))
+        ]
+
+        for col_idx, (val, align) in enumerate(vals, 1):
+            c = ws.cell(row=row_idx, column=col_idx)
+            c.value = val
+            c.alignment = align
+            c.border = cell_border
+            c.fill = current_fill
+            c.font = Font(name="Segoe UI", size=10)
+
+            # Styling Kolom Tagihan
+            if col_idx == 9:
+                c.number_format = "#,##0"
+                if tagihan_val > 0:
+                    c.font = Font(name="Segoe UI", size=10, bold=True, color="1E3A8A")
+
+            # Styling Status Bayar
+            elif col_idx == 10:
+                if st_bayar == "Lunas":
+                    c.fill = fill_lunas
+                    c.font = font_lunas
+                else:
+                    c.fill = fill_pending
+                    c.font = font_pending
+
+            # Styling Tahapan Cucian
+            elif col_idx == 11:
+                if st_raw == "selesai":
+                    c.font = Font(name="Segoe UI", size=10, bold=True, color="166534")
+                elif st_raw == "dibatalkan":
+                    c.fill = fill_batal
+                    c.font = font_batal
+
+        row_idx += 1
+
+    # 4. Baris Total Omset di Bawah
+    if sorted_orders:
+        ws.row_dimensions[row_idx].height = 26
+        summary_fill = PatternFill(start_color="E2E8F0", end_color="E2E8F0", fill_type="solid")
+        top_thin = Side(style="thin", color="94A3B8")
+        bot_double = Side(style="double", color="1E3A8A")
+        total_border = Border(top=top_thin, bottom=bot_double, left=Side(style="thin", color="E2E8F0"), right=Side(style="thin", color="E2E8F0"))
+
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=8)
+        lbl_cell = ws.cell(row=row_idx, column=1)
+        lbl_cell.value = "TOTAL KESELURUHAN OMSET TERCATAT (Rp)"
+        lbl_cell.font = Font(name="Segoe UI", size=11, bold=True, color="0F172A")
+        lbl_cell.alignment = Alignment(horizontal="right", vertical="center")
+        
+        for c_idx in range(1, 9):
+            ws.cell(row=row_idx, column=c_idx).fill = summary_fill
+            ws.cell(row=row_idx, column=c_idx).border = total_border
+
+        # Kolom Total Formula
+        sum_cell = ws.cell(row=row_idx, column=9)
+        sum_cell.value = f"=SUM(I5:I{row_idx-1})"
+        sum_cell.number_format = "#,##0"
+        sum_cell.font = Font(name="Segoe UI", size=11, bold=True, color="1E3A8A")
+        sum_cell.alignment = Alignment(horizontal="right", vertical="center")
+        sum_cell.fill = summary_fill
+        sum_cell.border = total_border
+
+        for c_idx in range(10, 16):
+            c_fill = ws.cell(row=row_idx, column=c_idx)
+            c_fill.fill = summary_fill
+            c_fill.border = total_border
+
+    # 5. Otomatisasi Lebar Kolom
+    col_min_widths = {
+        1: 6,   # No
+        2: 14,  # ID Nota
+        3: 20,  # Waktu
+        4: 22,  # Nama
+        5: 18,  # WhatsApp
+        6: 32,  # Layanan
+        7: 15,  # Estimasi
+        8: 14,  # Berat Riil
+        9: 18,  # Tagihan
+        10: 16, # Status Bayar
+        11: 28, # Tahapan Cucian
+        12: 24, # Metode
+        13: 35, # Alamat
+        14: 25, # Catatan
+        15: 14  # Rating
+    }
+
+    for col_idx, min_w in col_min_widths.items():
+        col_letter = get_column_letter(col_idx)
+        ws.column_dimensions[col_letter].width = min_w
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()

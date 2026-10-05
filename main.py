@@ -39,7 +39,7 @@ def setup_telegram_commands():
         try:
             admin_bot.set_my_commands([
                 types.BotCommand("admin", "👑 Panel Kontrol & Dashboard Toko"),
-                types.BotCommand("export", "📥 Unduh Rekap CSV Pembukuan"),
+                types.BotCommand("export", "📊 Unduh Rekap Excel (.xlsx)"),
                 types.BotCommand("broadcast", "📢 Siaran Pesan Promo ke Pelanggan"),
                 types.BotCommand("setadmin", "🔑 Daftarkan Akun Admin Utama")
             ])

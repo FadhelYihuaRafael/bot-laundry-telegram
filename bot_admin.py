@@ -5,7 +5,7 @@ from telebot import types
 from config import admin_bot, customer_bot, safe_send, ADMIN_PIN, STATUS_LIST, STATUS_EMOJIS
 from database import (
     load_admin_id, save_admin_id, get_order, update_order, 
-    get_all_orders, get_active_orders, export_orders_csv
+    get_all_orders, get_active_orders, export_orders_csv, export_orders_excel
 )
 from ai_helper import get_ai_reply
 
@@ -19,7 +19,7 @@ def admin_dashboard_markup():
     btn_active = types.InlineKeyboardButton("⏳ Pesanan Aktif", callback_data="admin_view_active")
     btn_find = types.InlineKeyboardButton("🔍 Cari Nota", callback_data="admin_find_order")
     btn_broadcast = types.InlineKeyboardButton("📢 Siaran Pesan Promo", callback_data="admin_start_broadcast")
-    btn_export = types.InlineKeyboardButton("📥 Unduh Rekap CSV", callback_data="admin_export_csv")
+    btn_export = types.InlineKeyboardButton("📊 Unduh Rekap Excel (.xlsx)", callback_data="admin_export_excel")
     btn_refresh = types.InlineKeyboardButton("🔄 Refresh Data", callback_data="admin_refresh_panel")
     
     markup.add(btn_active, btn_find)
@@ -85,12 +85,12 @@ def register_admin_handlers(bot):
 
         send_dashboard_view(chat_id)
 
-    @bot.message_handler(commands=['export'])
+    @bot.message_handler(commands=['export', 'excel'])
     def cmd_export(message):
         chat_id = message.chat.id
         if chat_id != load_admin_id():
             return
-        send_csv_export(chat_id)
+        send_excel_export(chat_id)
 
     @bot.message_handler(commands=['broadcast'])
     def cmd_broadcast(message):
@@ -163,9 +163,9 @@ def register_admin_handlers(bot):
             )
             bot.register_next_step_handler(msg, step_admin_search_order)
 
-        elif data == "admin_export_csv":
-            bot.answer_callback_query(call.id)
-            send_csv_export(chat_id)
+        elif data in ["admin_export_excel", "admin_export_csv"]:
+            bot.answer_callback_query(call.id, "Mempersiapkan file Excel...")
+            send_excel_export(chat_id)
 
         elif data == "admin_start_broadcast":
             bot.answer_callback_query(call.id)
@@ -559,26 +559,61 @@ def step_admin_search_order(message):
     order_id = message.text.strip().upper()
     show_admin_order_card(chat_id, order_id)
 
-def send_csv_export(chat_id):
-    """Menghasilkan dan mengirimkan file CSV pembukuan ke chat admin"""
+def send_excel_export(chat_id):
+    """Menghasilkan dan mengirimkan file Excel (.xlsx) rapi dan profesional ke chat admin"""
     try:
-        csv_bytes = export_orders_csv()
-        doc = io.BytesIO(csv_bytes)
-        filename = f"rekap_laundry_freshclean_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+        try:
+            admin_bot.send_chat_action(chat_id, "upload_document")
+        except Exception:
+            pass
+
+        excel_bytes = export_orders_excel()
+        doc = io.BytesIO(excel_bytes)
+        filename = f"rekap_laundry_freshclean_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
         doc.name = filename
+
+        all_orders = get_all_orders()
+        total = len(all_orders)
+        selesai = sum(1 for o in all_orders.values() if o.get("status") == "selesai")
+        real_omset = sum(int(o.get("total_bayar", 0)) for o in all_orders.values() if isinstance(o.get("total_bayar"), (int, float)))
+
+        caption = (
+            "📊 *REKAPITULASI PEMBUKUAN RESMI FRESHCLEAN* 🧺\n"
+            "─────────────────────────\n"
+            f"📁 *Format File:* Microsoft Excel (`.xlsx`)\n"
+            f"📦 *Total Nota:* `{total}` pesanan\n"
+            f"✅ *Pesanan Selesai:* `{selesai}` pesanan\n"
+            f"💵 *Total Omset Tercatat:* *Rp {real_omset:,}*\n"
+            "─────────────────────────\n"
+            "✨ *Tampilan Sudah Diformat Rapi:*\n"
+            "• Banner Judul & Info Tanggal Cetak\n"
+            "• Header Biru dengan Garis Tabel Lengkap\n"
+            "• Kolom Lebar Otomatis (Tidak Terpotong)\n"
+            "• Warna Status Pembayaran (Hijau = Lunas, Kuning = Belum Lunas)\n"
+            "• Format Angka Rupiah & Rumus Total Otomatis"
+        )
 
         admin_bot.send_document(
             chat_id,
             doc,
-            caption=(
-                "📥 *REKAPITULASI PEMBUKUAN FRESHCLEAN LAUNDRY*\n"
-                "─────────────────────────\n"
-                "File format CSV Excel berisi seluruh rincian transaksi nota, berat riil, total omset, status pembayaran, dan rating pelanggan."
-            ),
+            caption=caption,
             parse_mode="Markdown"
         )
     except Exception as e:
-        safe_send(admin_bot, chat_id, f"⚠️ Gagal mengekspor data CSV: {e}")
+        print(f"[ERROR] Gagal export Excel: {e}, mencoba fallback CSV...", flush=True)
+        # Fallback ke CSV jika ada kendala
+        try:
+            csv_bytes = export_orders_csv()
+            doc = io.BytesIO(csv_bytes)
+            doc.name = f"rekap_laundry_freshclean_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+            admin_bot.send_document(
+                chat_id,
+                doc,
+                caption="📥 *Rekapitulasi Pembukuan Laundry (Format CSV)*",
+                parse_mode="Markdown"
+            )
+        except Exception as e2:
+            safe_send(admin_bot, chat_id, f"⚠️ Gagal mengekspor data: {e2}")
 
 def start_broadcast_prompt(chat_id):
     """Memulai alur siaran pesan promo"""
