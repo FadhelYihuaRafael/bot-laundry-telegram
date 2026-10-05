@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import os
 import random
@@ -9,6 +11,13 @@ from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
+
+# Muat konfigurasi dari file .env lokal jika tersedia
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # Konfigurasi encoding konsol agar aman di Windows
 if sys.platform.startswith("win"):
@@ -37,6 +46,10 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "admin_config.json")
 # File untuk menyimpan semua data pesanan laundry
 ORDERS_FILE = os.path.join(os.path.dirname(__file__), "orders.json")
 
+# Lock untuk keamanan akses concurrent file JSON
+orders_lock = threading.Lock()
+config_lock = threading.Lock()
+
 def load_admin_id():
     """Memuat ID Admin dari environment variable, file konfigurasi, atau fallback ID pemilik asli"""
     env_id = os.getenv("ADMIN_CHAT_ID")
@@ -55,14 +68,20 @@ def load_admin_id():
     return 1335564018
 
 def save_admin_id(admin_id):
-    """Menyimpan ID Admin ke file konfigurasi"""
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump({"admin_chat_id": admin_id}, f, indent=4)
-        return True
-    except Exception as e:
-        print(f"[ERROR] Gagal menyimpan admin ID: {e}")
-        return False
+    """Menyimpan ID Admin ke file konfigurasi secara aman"""
+    with config_lock:
+        try:
+            temp_file = CONFIG_FILE + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump({"admin_chat_id": admin_id}, f, indent=4)
+            if os.path.exists(CONFIG_FILE):
+                os.replace(temp_file, CONFIG_FILE)
+            else:
+                os.rename(temp_file, CONFIG_FILE)
+            return True
+        except Exception as e:
+            print(f"[ERROR] Gagal menyimpan admin ID: {e}", flush=True)
+            return False
 
 def load_orders():
     """Memuat semua data pesanan laundry dari file JSON"""
@@ -75,12 +94,18 @@ def load_orders():
     return {}
 
 def save_orders(orders_dict):
-    """Menyimpan semua data pesanan laundry ke file JSON"""
-    try:
-        with open(ORDERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(orders_dict, f, indent=4, ensure_ascii=False)
-    except Exception as e:
-        print(f"[ERROR] Gagal menyimpan data pesanan: {e}", flush=True)
+    """Menyimpan semua data pesanan laundry ke file JSON secara aman dan atomik"""
+    with orders_lock:
+        try:
+            temp_file = ORDERS_FILE + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(orders_dict, f, indent=4, ensure_ascii=False)
+            if os.path.exists(ORDERS_FILE):
+                os.replace(temp_file, ORDERS_FILE)
+            else:
+                os.rename(temp_file, ORDERS_FILE)
+        except Exception as e:
+            print(f"[ERROR] Gagal menyimpan data pesanan: {e}", flush=True)
 
 # Inisialisasi Bot & Admin Chat ID
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -88,6 +113,9 @@ ADMIN_CHAT_ID = load_admin_id()
 
 # Muat data pesanan yang tersimpan
 all_orders = load_orders()
+
+# Draft siaran pesan broadcast sementara
+broadcast_draft = {}
 
 # Status pengerjaan laundry yang valid
 STATUS_LIST = {
@@ -98,6 +126,7 @@ STATUS_LIST = {
     "selesai": "✅ Cucian Selesai & Diterima Pelanggan",
     "dibatalkan": "❌ Pesanan Dibatalkan"
 }
+
 
 # Tempat penyimpanan sementara sesi formulir pemesanan laundry
 user_orders = {}
@@ -184,6 +213,9 @@ def setup_bot_commands():
             types.BotCommand("cekpesanan", "🔍 Cek Status Pengerjaan Cucian"),
             types.BotCommand("tanya", "🤖 Tanya Asisten Cerdas AI / CS"),
             types.BotCommand("myid", "🆔 ID Telegram Saya"),
+            types.BotCommand("admin", "👑 Panel Kontrol Admin"),
+            types.BotCommand("export", "📥 Unduh Rekap CSV (Admin)"),
+            types.BotCommand("broadcast", "📢 Kirim Pengumuman (Admin)")
         ]
         bot.set_my_commands(commands)
         try:
@@ -369,6 +401,81 @@ def set_admin_handler(message):
     print(f"[INFO] Admin Laundry berhasil diset ke Chat ID: {ADMIN_CHAT_ID} ({user_name})", flush=True)
 
 
+def admin_panel_markup():
+    """Menu tombol interaktif khusus Panel Kontrol Admin"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_export = types.InlineKeyboardButton("📥 Unduh Rekap CSV", callback_data="admin_export_csv")
+    btn_filter = types.InlineKeyboardButton("📋 Filter Antrean", callback_data="admin_filter_antrean")
+    btn_broadcast = types.InlineKeyboardButton("📢 Siaran Promo", callback_data="admin_start_broadcast")
+    btn_refresh = types.InlineKeyboardButton("🔄 Refresh Panel", callback_data="buka_panel_admin")
+    markup.add(btn_export, btn_filter)
+    markup.add(btn_broadcast, btn_refresh)
+    return markup
+
+def generate_orders_csv():
+    """Menghasilkan teks CSV dari seluruh riwayat data pesanan"""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "ID Nota", "Waktu", "Nama Pelanggan", "No WhatsApp", "Username Telegram",
+        "Paket Layanan", "Estimasi", "Berat Riil", "Total Tagihan (Rp)",
+        "Status Pembayaran", "Status Cucian", "Rating", "Metode", "Alamat", "Catatan"
+    ])
+    for oid, o in all_orders.items():
+        writer.writerow([
+            oid,
+            o.get("waktu", "-"),
+            o.get("nama", "-"),
+            o.get("hp", "-"),
+            o.get("buyer_username", "-"),
+            o.get("layanan", "-"),
+            o.get("estimasi", "-"),
+            o.get("berat_riil", "-"),
+            o.get("total_bayar", "-"),
+            o.get("status_bayar", "Belum Lunas"),
+            STATUS_LIST.get(o.get("status", ""), o.get("status", "-")),
+            f"{o.get('rating', '-')} Bintang" if o.get('rating') else "-",
+            o.get("metode", "-"),
+            o.get("alamat", "-"),
+            o.get("catatan", "-")
+        ])
+    return output.getvalue()
+
+def send_orders_csv(chat_id):
+    """Mengirim file CSV rekap data transaksi ke Admin"""
+    csv_text = generate_orders_csv()
+    csv_bytes = io.BytesIO(csv_text.encode("utf-8-sig"))
+    filename = f"Rekap_FreshClean_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+    csv_bytes.name = filename
+    total_nota = len(all_orders)
+    total_omset = sum(int(o.get("total_bayar", 0)) for o in all_orders.values() if isinstance(o.get("total_bayar"), (int, float)))
+    caption = (
+        f"📊 *REKAP DATA TRANSAKSI FRESHCLEAN LAUNDRY*\n"
+        f"─────────────────────────\n"
+        f"• Total Seluruh Nota : *{total_nota} nota*\n"
+        f"• Total Omset Tercatat: *Rp {total_omset:,}*\n\n"
+        "💡 _File `.csv` ini di-encode dengan UTF-8 BOM sehingga dapat langsung dibuka rapi di Microsoft Excel atau Google Sheets tanpa teks berantakan._"
+    )
+    bot.send_document(chat_id, csv_bytes, caption=caption, parse_mode="Markdown")
+
+@bot.message_handler(commands=['export', 'download', 'csv'])
+def export_command(message):
+    """Handler perintah /export untuk download laporan rekap CSV"""
+    chat_id = message.chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        bot.reply_to(message, "⛔ Perintah ini hanya dapat diakses oleh Admin Laundry.", parse_mode="Markdown")
+        return
+    send_orders_csv(chat_id)
+
+@bot.message_handler(commands=['broadcast', 'siaran', 'promo'])
+def broadcast_command(message):
+    """Handler perintah /broadcast untuk mengirim pesan ke seluruh pelanggan"""
+    chat_id = message.chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        bot.reply_to(message, "⛔ Perintah ini hanya dapat diakses oleh Admin Laundry.", parse_mode="Markdown")
+        return
+    start_broadcast_prompt(chat_id)
+
 @bot.message_handler(commands=['admin', 'rekap', 'panel'])
 def admin_panel_handler(message):
     """Panel kontrol khusus admin untuk memantau status antrean cucian"""
@@ -399,7 +506,8 @@ def admin_panel_handler(message):
         order_list_text = "\n📋 *Antrean Pengerjaan Terkini (Maks. 5):*\n"
         for o in active_orders_sorted:
             st = STATUS_LIST.get(o.get("status", ""), o.get("status", ""))
-            order_list_text += f"• `{o.get('order_id')}` | {o.get('nama')} ({o.get('layanan')})\n  └ Status: _{st}_\n"
+            tagihan = f" (Rp {o.get('total_bayar', 0):,})" if o.get('total_bayar') else ""
+            order_list_text += f"• `{o.get('order_id')}` | {o.get('nama')} ({o.get('layanan')}){tagihan}\n  └ Status: _{st}_\n"
     else:
         order_list_text = "\n🎉 *Tidak ada antrean cucian aktif saat ini.*"
 
@@ -415,13 +523,12 @@ def admin_panel_handler(message):
         f"• 📦 Total Seluruh Nota     : *{total_orders}*\n"
         "─────────────────────────"
         f"{order_list_text}\n\n"
-        "💡 *Tips Admin:*\n"
-        "• Gunakan `/cekpesanan [ID_NOTA]` untuk melihat detail nota.\n"
-        "• Klik tombol tahapan di notifikasi pesanan untuk memperbarui status cucian pelanggan.\n"
-        "• 💬 *Tanya Asisten Cerdas:* Ketik `/tanya [pertanyaan]` atau langsung kirim pesan chat ke bot!"
+        "💡 *Menu Aksi Admin:*\n"
+        "Pilih salah satu tombol di bawah untuk mengunduh laporan, memfilter antrean, atau menyiarkan promo:"
     )
 
-    bot.send_message(chat_id, admin_panel_text, parse_mode="Markdown")
+    bot.send_message(chat_id, admin_panel_text, parse_mode="Markdown", reply_markup=admin_panel_markup())
+
 
 
 # ==========================================
@@ -468,6 +575,235 @@ def get_tarif_text_and_markup():
 def send_tarif_message(chat_id):
     tarif_text, markup = get_tarif_text_and_markup()
     bot.send_message(chat_id, tarif_text, parse_mode="Markdown", reply_markup=markup)
+
+
+# ==========================================
+# HELPER OPERASIONAL LAUNDRY & ADMIN
+# ==========================================
+def step_admin_tanya(message):
+    """Handler input pertanyaan khusus admin"""
+    if is_cancelled(message):
+        bot.send_message(message.chat.id, "Sesi tanya asisten ditutup.", reply_markup=persistent_menu_markup(is_admin=True))
+        return
+    process_query(message, message.text.strip(), is_admin=True)
+
+def ask_billing_input(chat_id, order_id):
+    """Meminta Admin memasukkan berat riil dan total tagihan untuk nota"""
+    order = all_orders.get(order_id)
+    if not order:
+        bot.send_message(chat_id, f"⚠️ Nota {order_id} tidak ditemukan.")
+        return
+    msg = bot.send_message(
+        chat_id,
+        f"⚖️ *INPUT TIMBANGAN & TAGIHAN: `{order_id}`*\n"
+        f"─────────────────────────\n"
+        f"👤 Pelanggan: *{order.get('nama')}*\n"
+        f"🧺 Layanan: *{order.get('layanan')}*\n\n"
+        "Silakan ketik berat riil cucian & total tagihan (pisahkan dengan spasi):\n"
+        "• Format: `[Berat_Kg] [Total_Rp]`\n"
+        "• Contoh: `3.5 24500` (artinya 3.5 Kg, total Rp 24.500)\n"
+        "• Atau cukup ketik beratnya saja: `3.5` (sistem otomatis menghitung tarif standar paketnya)\n\n"
+        "_(Ketik 'batal' untuk membatalkan)_",
+        parse_mode="Markdown",
+        reply_markup=cancel_order_markup()
+    )
+    bot.register_next_step_handler(msg, lambda m: step_process_billing(m, order_id))
+
+def step_process_billing(message, order_id):
+    """Memproses input berat dan menerbitkan nota digital ke pelanggan"""
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
+    if is_cancelled(message):
+        bot.send_message(chat_id, "Input tagihan dibatalkan.", reply_markup=persistent_menu_markup(is_admin=True))
+        return
+
+    order = all_orders.get(order_id)
+    if not order:
+        bot.send_message(chat_id, f"⚠️ Nota {order_id} tidak ditemukan.", reply_markup=persistent_menu_markup(is_admin=True))
+        return
+
+    parts = text.replace(",", ".").split()
+    try:
+        berat_val = float(parts[0])
+        berat_str = f"{berat_val} Kg"
+        if len(parts) >= 2:
+            clean_digits = "".join(filter(str.isdigit, parts[1]))
+            total_bayar = int(clean_digits) if clean_digits else int(berat_val * 7000)
+        else:
+            layanan_lower = order.get("layanan", "").lower()
+            if "super express" in layanan_lower or "6 jam" in layanan_lower:
+                rate = 15000
+            elif "express" in layanan_lower or "24 jam" in layanan_lower:
+                rate = 10000
+            elif "lipat" in layanan_lower:
+                rate = 5000
+            elif "setrika" in layanan_lower:
+                rate = 4500
+            else:
+                rate = 7000
+            total_bayar = int(round(berat_val * rate))
+    except Exception:
+        msg = bot.send_message(
+            chat_id,
+            "⚠️ Format tidak valid. Silakan masukkan angka berat (contoh: `3.5`) atau dengan harga (contoh: `3.5 24500`):",
+            parse_mode="Markdown",
+            reply_markup=cancel_order_markup()
+        )
+        bot.register_next_step_handler(msg, lambda m: step_process_billing(m, order_id))
+        return
+
+    order["berat_riil"] = berat_str
+    order["total_bayar"] = total_bayar
+    order["status_bayar"] = "Belum Lunas"
+    save_orders(all_orders)
+
+    bot.send_message(
+        chat_id,
+        f"✅ *Tagihan Nota `{order_id}` Berhasil Diterbitkan!*\n\n"
+        f"• Pelanggan : *{order.get('nama')}*\n"
+        f"• Berat Riil: *{berat_str}*\n"
+        f"• Total Tagihan : *Rp {total_bayar:,}*\n"
+        f"• Status Bayar : ⏳ Belum Lunas\n\n"
+        "Rincian nota digital & instruksi pembayaran telah dikirimkan otomatis ke pelanggan.",
+        parse_mode="Markdown",
+        reply_markup=persistent_menu_markup(is_admin=True)
+    )
+
+    buyer_id = order.get("buyer_chat_id")
+    if buyer_id:
+        try:
+            invoice_text = (
+                "🧾 *NOTA RINCIAN & TAGIHAN CUCIAN*\n"
+                "─────────────────────────\n"
+                f"Halo Kak *{order.get('nama')}*! Cucian Anda telah selesai ditimbang di FreshClean Laundry:\n\n"
+                f"🆔 *No. Nota:* `{order_id}`\n"
+                f"🧺 *Layanan:* {order.get('layanan')}\n"
+                f"⚖️ *Berat Riil Cucian:* *{berat_str}*\n"
+                f"💵 *TOTAL TAGIHAN:* *Rp {total_bayar:,}*\n"
+                f"📊 *Status Pembayaran:* ⏳ *Belum Lunas*\n"
+                "─────────────────────────\n"
+                "💳 *METODE PEMBAYARAN:*\n"
+                "1. 📲 *QRIS:* Scan dari m-Banking BCA/Mandiri/GoPay/OVO/DANA/ShopeePay\n"
+                "2. 🏦 *Transfer BCA:* `1234567890` a/n *FreshClean Laundry*\n"
+                "3. 💵 *Tunai (COD):* Bayar tunai saat kurir mengantar cucian Anda\n\n"
+                "Jika Anda transfer atau bayar via QRIS, silakan klik tombol *📸 Kirim Bukti Transfer* di bawah untuk upload foto bukti struk:"
+            )
+            inv_markup = types.InlineKeyboardMarkup(row_width=1)
+            btn_proof = types.InlineKeyboardButton("📸 Kirim Bukti Transfer", callback_data=f"kirim_bukti_{order_id}")
+            btn_menu = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_utama")
+            inv_markup.add(btn_proof, btn_menu)
+            bot.send_message(buyer_id, invoice_text, parse_mode="Markdown", reply_markup=inv_markup)
+        except Exception as e:
+            print(f"[ERROR] Gagal mengirim tagihan ke pelanggan {buyer_id}: {e}", flush=True)
+
+def prompt_upload_proof(chat_id, order_id):
+    """Meminta pelanggan mengunggah foto bukti transfer"""
+    order = all_orders.get(order_id)
+    if not order:
+        bot.send_message(chat_id, f"⚠️ Nota {order_id} tidak ditemukan.")
+        return
+    msg = bot.send_message(
+        chat_id,
+        f"📸 *KIRIM BUKTI PEMBAYARAN*\n"
+        f"─────────────────────────\n"
+        f"🆔 *No. Nota:* `{order_id}`\n"
+        f"💵 *Total Tagihan:* *Rp {order.get('total_bayar', 0):,}*\n\n"
+        "Silakan *kirim FOTO / SCREENSHOT bukti transfer* Anda ke chat ini sekarang:\n\n"
+        "_(Ketik 'batal' untuk membatalkan)_",
+        parse_mode="Markdown",
+        reply_markup=cancel_order_markup()
+    )
+    bot.register_next_step_handler(msg, lambda m: step_receive_payment_proof(m, order_id))
+
+def step_receive_payment_proof(message, order_id):
+    """Menerima foto bukti pembayaran dan meneruskannya ke admin"""
+    chat_id = message.chat.id
+    if is_cancelled(message):
+        bot.send_message(chat_id, "Pengiriman bukti transfer dibatalkan.", reply_markup=persistent_menu_markup())
+        return
+
+    order = all_orders.get(order_id)
+    if not order:
+        bot.send_message(chat_id, f"⚠️ Nota {order_id} tidak ditemukan.", reply_markup=persistent_menu_markup())
+        return
+
+    if not message.photo:
+        msg = bot.send_message(
+            chat_id,
+            "⚠️ Anda belum mengirim foto. Mohon kirimkan gambar/foto screenshot bukti transfer:",
+            reply_markup=cancel_order_markup()
+        )
+        bot.register_next_step_handler(msg, lambda m: step_receive_payment_proof(m, order_id))
+        return
+
+    photo_id = message.photo[-1].file_id
+    order["status_bayar"] = "Menunggu Verifikasi"
+    save_orders(all_orders)
+
+    bot.send_message(
+        chat_id,
+        f"✅ *Bukti Pembayaran Berhasil Dikirim!*\n\n"
+        f"Terima kasih Kak *{order.get('nama')}*. Bukti transfer untuk nota `{order_id}` sedang diverifikasi oleh Admin FreshClean. "
+        "Kami akan mengirimkan notifikasi saat pembayaran telah terkonfirmasi lunas. ✨",
+        parse_mode="Markdown",
+        reply_markup=persistent_menu_markup()
+    )
+
+    if ADMIN_CHAT_ID:
+        try:
+            admin_mk = types.InlineKeyboardMarkup(row_width=1)
+            btn_verify = types.InlineKeyboardButton("✅ Konfirmasi Pembayaran Lunas", callback_data=f"admin_lunas_{order_id}")
+            admin_mk.add(btn_verify)
+            caption = (
+                f"💳 *BUKTI PEMBAYARAN MASUK!* 📸\n"
+                f"─────────────────────────\n"
+                f"• No. Nota: `{order_id}`\n"
+                f"• Pelanggan: *{order.get('nama')}* (@{order.get('buyer_username', '-')})\n"
+                f"• Total Tagihan: *Rp {order.get('total_bayar', 0):,}*\n"
+                f"• Status Bayar: *Menunggu Verifikasi*\n\n"
+                "Silakan periksa mutasi rekening Anda, lalu klik tombol di bawah untuk verifikasi:"
+            )
+            bot.send_photo(ADMIN_CHAT_ID, photo_id, caption=caption, parse_mode="Markdown", reply_markup=admin_mk)
+        except Exception as e:
+            print(f"[ERROR] Gagal meneruskan foto bukti ke admin: {e}", flush=True)
+
+def start_broadcast_prompt(chat_id):
+    """Memulai proses broadcast pesan promo"""
+    msg = bot.send_message(
+        chat_id,
+        "📢 *KIRIM SIARAN PROMO / PENGUMUMAN*\n"
+        "─────────────────────────\n"
+        "Ketik teks pesan promosi atau pengumuman yang ingin dikirimkan ke SEMUA pelanggan bot.\n\n"
+        "_(Ketik 'batal' untuk membatalkan)_",
+        parse_mode="Markdown",
+        reply_markup=cancel_order_markup()
+    )
+    bot.register_next_step_handler(msg, step_receive_broadcast_draft)
+
+def step_receive_broadcast_draft(message):
+    """Menyimpan draft dan meminta konfirmasi sebelum siaran dikirim"""
+    chat_id = message.chat.id
+    if is_cancelled(message):
+        bot.send_message(chat_id, "Siaran pesan dibatalkan.", reply_markup=persistent_menu_markup(is_admin=True))
+        return
+
+    text = message.text.strip()
+    broadcast_draft[chat_id] = text
+
+    preview = (
+        "📢 *PREVIEW PESAN SIARAN:*\n"
+        "─────────────────────────\n"
+        f"{text}\n"
+        "─────────────────────────\n"
+        "Kirimkan pesan siaran ini ke seluruh pelanggan sekarang?"
+    )
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_send = types.InlineKeyboardButton("🚀 Kirim Sekarang", callback_data="confirm_broadcast")
+    btn_cancel = types.InlineKeyboardButton("❌ Batal", callback_data="cancel_broadcast")
+    markup.add(btn_send, btn_cancel)
+
+    bot.send_message(chat_id, preview, parse_mode="Markdown", reply_markup=markup)
+
 
 
 # ==========================================
@@ -658,7 +994,7 @@ def callback_listener(call):
         }
         save_orders(all_orders)
 
-        # Tombol aksi bagi Admin (WhatsApp + Update Tahapan Laundry)
+        # Tombol aksi bagi Admin (WhatsApp + Input Tagihan + Update Tahapan Laundry)
         admin_markup = types.InlineKeyboardMarkup(row_width=1)
         clean_phone = "".join(filter(str.isdigit, order_data['hp']))
         if clean_phone.startswith("0"):
@@ -670,12 +1006,13 @@ def callback_listener(call):
             btn_wa_buyer = types.InlineKeyboardButton("💬 Chat Pelanggan via WhatsApp", url=f"https://wa.me/{clean_phone}")
             admin_markup.add(btn_wa_buyer)
 
+        btn_bill = types.InlineKeyboardButton("⚖️ Input Berat Riil & Buat Tagihan", callback_data=f"admin_bill_{order_id}")
         btn_st_cuci = types.InlineKeyboardButton("🧺 Tandai: Sedang Dicuci", callback_data=f"admin_status_{order_id}_dicuci")
         btn_st_setrika = types.InlineKeyboardButton("👔 Tandai: Sedang Disetrika & Packing", callback_data=f"admin_status_{order_id}_disetrika")
         btn_st_siap = types.InlineKeyboardButton("🛵 Tandai: Siap Diantar / Diambil", callback_data=f"admin_status_{order_id}_siap_antar")
         btn_st_selesai = types.InlineKeyboardButton("✅ Tandai: Cucian Selesai", callback_data=f"admin_status_{order_id}_selesai")
         btn_st_batal = types.InlineKeyboardButton("❌ Batalkan Pesanan", callback_data=f"admin_status_{order_id}_dibatalkan")
-        admin_markup.add(btn_st_cuci, btn_st_setrika, btn_st_siap, btn_st_selesai, btn_st_batal)
+        admin_markup.add(btn_bill, btn_st_cuci, btn_st_setrika, btn_st_siap, btn_st_selesai, btn_st_batal)
 
         # Kirim ke Admin jika ID admin sudah diset
         if ADMIN_CHAT_ID and ADMIN_CHAT_ID != 0:
@@ -761,20 +1098,235 @@ def callback_listener(call):
                 )
                 if new_status == "siap_antar":
                     notif_msg += "🛵 Cucian Anda sudah bersih, wangi, rapi, dan siap diantar kurir atau diambil di outlet kami! ✨"
+                    reply_mk = back_to_main_menu()
                 elif new_status == "selesai":
-                    notif_msg += "🎉 Terima kasih banyak telah mempercayakan cucian Anda pada FreshClean Laundry! Semoga puas dengan layanan kami! ⭐⭐⭐⭐⭐"
+                    notif_msg += (
+                        "🎉 Terima kasih banyak telah mempercayakan cucian Anda pada FreshClean Laundry! Semoga puas dengan layanan kami! ✨\n\n"
+                        "Bagaimana kepuasan Anda terhadap layanan cucian kami? Mohon berikan penilaian bintang di bawah:"
+                    )
+                    rating_markup = types.InlineKeyboardMarkup(row_width=3)
+                    r5 = types.InlineKeyboardButton("⭐⭐⭐⭐⭐ (5)", callback_data=f"rate_{target_order_id}_5")
+                    r4 = types.InlineKeyboardButton("⭐⭐⭐⭐ (4)", callback_data=f"rate_{target_order_id}_4")
+                    r3 = types.InlineKeyboardButton("⭐⭐⭐ (3)", callback_data=f"rate_{target_order_id}_3")
+                    r2 = types.InlineKeyboardButton("⭐⭐ (2)", callback_data=f"rate_{target_order_id}_2")
+                    r1 = types.InlineKeyboardButton("⭐ (1)", callback_data=f"rate_{target_order_id}_1")
+                    btn_home = types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_utama")
+                    rating_markup.add(r5, r4)
+                    rating_markup.add(r3, r2, r1)
+                    rating_markup.add(btn_home)
+                    reply_mk = rating_markup
                 else:
                     notif_msg += "Pakaian Anda sedang kami proses dengan higienis dan teliti. Kami akan kabari kembali saat siap diantar."
+                    reply_mk = back_to_main_menu()
 
                 bot.send_message(
                     buyer_id,
                     notif_msg,
                     parse_mode="Markdown",
-                    reply_markup=back_to_main_menu()
+                    reply_markup=reply_mk
                 )
                 print(f"[INFO] Notifikasi update status {target_order_id} ({new_status}) terkirim ke pelanggan {buyer_id}", flush=True)
             except Exception as e:
                 print(f"[ERROR] Gagal mengirim notifikasi status ke pelanggan {buyer_id}: {e}", flush=True)
+
+    # 11. Handler Input Tagihan & Berat Riil oleh Admin
+    elif call.data.startswith("admin_bill_"):
+        if chat_id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "Khusus Admin", show_alert=True)
+            return
+        target_oid = call.data.replace("admin_bill_", "")
+        bot.answer_callback_query(call.id)
+        ask_billing_input(chat_id, target_oid)
+
+    # 12. Handler Pelanggan Ingin Mengirim Bukti Transfer
+    elif call.data.startswith("kirim_bukti_"):
+        target_oid = call.data.replace("kirim_bukti_", "")
+        bot.answer_callback_query(call.id)
+        prompt_upload_proof(chat_id, target_oid)
+
+    # 13. Handler Admin Verifikasi Pembayaran Lunas
+    elif call.data.startswith("admin_lunas_"):
+        if chat_id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "Khusus Admin", show_alert=True)
+            return
+        target_oid = call.data.replace("admin_lunas_", "")
+        order = all_orders.get(target_oid)
+        if not order:
+            bot.answer_callback_query(call.id, "Nota tidak ditemukan.", show_alert=True)
+            return
+        order["status_bayar"] = "Lunas"
+        save_orders(all_orders)
+        bot.answer_callback_query(call.id, f"Nota {target_oid} diverifikasi Lunas!", show_alert=True)
+        bot.send_message(
+            chat_id,
+            f"✅ Pembayaran untuk nota *{target_oid}* ({order.get('nama')}) resmi berstatus: *LUNAS* 💵✨",
+            parse_mode="Markdown"
+        )
+        buyer_id = order.get("buyer_chat_id")
+        if buyer_id:
+            try:
+                bot.send_message(
+                    buyer_id,
+                    f"🎉 *PEMBAYARAN DIVERIFIKASI & LUNAS!* 🧾\n"
+                    f"─────────────────────────\n"
+                    f"Halo Kak *{order.get('nama')}*, pembayaran untuk nota `{target_oid}` sebesar *Rp {order.get('total_bayar', 0):,}* "
+                    "telah kami terima dan diverifikasi *LUNAS*. Terima kasih atas kepercayaan Anda! 🧺✨",
+                    parse_mode="Markdown",
+                    reply_markup=back_to_main_menu()
+                )
+            except Exception as e:
+                print(f"[ERROR] Gagal mengirim notif lunas ke pelanggan {buyer_id}: {e}", flush=True)
+
+    # 14. Handler Ulasan / Rating Bintang dari Pelanggan
+    elif call.data.startswith("rate_"):
+        parts = call.data.split("_")
+        if len(parts) >= 3:
+            target_oid = parts[1]
+            score = parts[2]
+            order = all_orders.get(target_oid)
+            if order:
+                order["rating"] = int(score)
+                save_orders(all_orders)
+                stars_visual = "⭐" * int(score)
+                bot.answer_callback_query(call.id, f"Terima kasih atas ulasan {score} bintang Anda!")
+                bot.edit_message_text(
+                    f"⭐ *TERIMA KASIH ATAS PENILAIAN ANDA!*\n"
+                    f"─────────────────────────\n"
+                    f"Penilaian Anda: *{stars_visual}* ({score}/5 Bintang)\n\n"
+                    "Ulasan Anda sangat berharga bagi kami untuk terus memberikan layanan laundry terbaik, bersih, dan higienis! 🧺✨",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    parse_mode="Markdown",
+                    reply_markup=back_to_main_menu()
+                )
+                if ADMIN_CHAT_ID:
+                    try:
+                        bot.send_message(
+                            ADMIN_CHAT_ID,
+                            f"🌟 *ULASAN BARU DARI PELANGGAN!*\n"
+                            f"• No. Nota: `{target_oid}`\n"
+                            f"• Pelanggan: *{order.get('nama')}*\n"
+                            f"• Rating: *{stars_visual}* ({score}/5)",
+                            parse_mode="Markdown"
+                        )
+                    except Exception:
+                        pass
+
+    # 15. Handler Download CSV dari Tombol Panel Admin
+    elif call.data == "admin_export_csv":
+        if chat_id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "Khusus Admin", show_alert=True)
+            return
+        bot.answer_callback_query(call.id, "Menyiapkan file CSV...")
+        send_orders_csv(chat_id)
+
+    # 16. Handler Filter Antrean Cucian
+    elif call.data == "admin_filter_antrean":
+        if chat_id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "Khusus Admin", show_alert=True)
+            return
+        bot.answer_callback_query(call.id)
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btn_f1 = types.InlineKeyboardButton("⏳ Menunggu Jemput", callback_data="filter_status_menunggu")
+        btn_f2 = types.InlineKeyboardButton("🧺 Sedang Dicuci", callback_data="filter_status_dicuci")
+        btn_f3 = types.InlineKeyboardButton("👔 Sedang Disetrika", callback_data="filter_status_disetrika")
+        btn_f4 = types.InlineKeyboardButton("🛵 Siap Diantar", callback_data="filter_status_siap_antar")
+        btn_f5 = types.InlineKeyboardButton("✅ Selesai", callback_data="filter_status_selesai")
+        btn_f6 = types.InlineKeyboardButton("👑 Panel Admin", callback_data="buka_panel_admin")
+        markup.add(btn_f1, btn_f2)
+        markup.add(btn_f3, btn_f4)
+        markup.add(btn_f5, btn_f6)
+        bot.edit_message_text(
+            "🔍 *PILIH FILTER STATUS ANTREAN CUCIAN:*\n"
+            "Silakan pilih status yang ingin ditampilkan:",
+            chat_id=chat_id,
+            message_id=message_id,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+
+    elif call.data.startswith("filter_status_"):
+        if chat_id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "Khusus Admin", show_alert=True)
+            return
+        bot.answer_callback_query(call.id)
+        target_status = call.data.replace("filter_status_", "")
+        status_label = STATUS_LIST.get(target_status, target_status)
+        matching = [o for o in all_orders.values() if o.get("status") == target_status]
+        matching_sorted = sorted(matching, key=lambda x: x.get("waktu", ""), reverse=True)
+
+        res_text = f"📋 *ANTREAN STATUS: {status_label}*\n"
+        res_text += f"Total: *{len(matching_sorted)} pesanan*\n─────────────────────────\n"
+        if matching_sorted:
+            for o in matching_sorted[:10]:
+                tagihan_info = f" (Rp {o.get('total_bayar', 0):,})" if o.get('total_bayar') else ""
+                res_text += f"• `{o.get('order_id')}` | *{o.get('nama')}*{tagihan_info}\n  └ {o.get('layanan')}\n  └ WA: `{o.get('hp')}`\n"
+        else:
+            res_text += "Tidak ada pesanan pada status ini."
+
+        f_markup = types.InlineKeyboardMarkup(row_width=2)
+        btn_f_back = types.InlineKeyboardButton("🔍 Filter Lain", callback_data="admin_filter_antrean")
+        btn_f_panel = types.InlineKeyboardButton("👑 Panel Admin", callback_data="buka_panel_admin")
+        f_markup.add(btn_f_back, btn_f_panel)
+
+        bot.edit_message_text(res_text, chat_id=chat_id, message_id=message_id, parse_mode="Markdown", reply_markup=f_markup)
+
+    # 17. Handler Broadcast Siaran Promo
+    elif call.data == "admin_start_broadcast":
+        if chat_id != ADMIN_CHAT_ID:
+            bot.answer_callback_query(call.id, "Khusus Admin", show_alert=True)
+            return
+        bot.answer_callback_query(call.id)
+        start_broadcast_prompt(chat_id)
+
+    elif call.data == "confirm_broadcast":
+        if chat_id != ADMIN_CHAT_ID:
+            return
+        text_to_send = broadcast_draft.get(chat_id)
+        if not text_to_send:
+            bot.answer_callback_query(call.id, "Tidak ada draft siaran yang aktif.", show_alert=True)
+            return
+
+        bot.answer_callback_query(call.id, "Mengirim siaran ke pelanggan...")
+        bot.send_message(chat_id, "⏳ *Sedang mengirim siaran pesan ke seluruh pelanggan...*", parse_mode="Markdown")
+
+        unique_buyers = set(o.get("buyer_chat_id") for o in all_orders.values() if o.get("buyer_chat_id"))
+        success_count = 0
+        fail_count = 0
+
+        for b_id in unique_buyers:
+            try:
+                bot.send_message(
+                    b_id,
+                    f"📢 *PENGUMUMAN FRESHCLEAN LAUNDRY*\n─────────────────────────\n{text_to_send}",
+                    parse_mode="Markdown",
+                    reply_markup=main_menu()
+                )
+                success_count += 1
+            except Exception:
+                fail_count += 1
+
+        broadcast_draft.pop(chat_id, None)
+        bot.send_message(
+            chat_id,
+            f"✅ *Siaran Pesan Selesai Terkirim!*\n"
+            f"• Berhasil : *{success_count} pelanggan*\n"
+            f"• Gagal : *{fail_count}*\n",
+            parse_mode="Markdown",
+            reply_markup=admin_panel_markup()
+        )
+
+    elif call.data == "cancel_broadcast":
+        broadcast_draft.pop(chat_id, None)
+        bot.answer_callback_query(call.id, "Siaran dibatalkan.")
+        bot.edit_message_text(
+            "❌ Pengiriman pesan siaran dibatalkan.",
+            chat_id=chat_id,
+            message_id=message_id,
+            parse_mode="Markdown",
+            reply_markup=admin_panel_markup()
+        )
+
 
     # 11. Keunggulan & Promo
     elif call.data == "menu_keunggulan":
@@ -921,16 +1473,26 @@ def step_input_hp(message):
     metode = user_orders[chat_id].get("metode", "")
     if "Outlet" in metode:
         alamat_hint = "Masukkan *Alamat Domisili / Kost Singkat* Anda (atau ketik `-` jika tidak perlu pengantaran balik):"
+        step_markup = cancel_order_markup()
     else:
-        alamat_hint = "Masukkan *Alamat Lengkap Penjemputan* (Nama Jalan, No. Rumah/Kost/Kamar, RT/RW, Patokan):"
+        alamat_hint = (
+            "Masukkan *Alamat Lengkap Penjemputan* (Nama Jalan, No. Rumah/Kost/Kamar, RT/RW, Patokan).\n\n"
+            "💡 *Tips Praktis:* Anda juga bisa langsung menekan tombol *📍 Kirim Titik Lokasi GPS* di bawah agar kurir tidak tersasar!"
+        )
+        step_markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        btn_loc = types.KeyboardButton("📍 Kirim Titik Lokasi GPS Saya", request_location=True)
+        btn_cancel = types.KeyboardButton("❌ Batal Pesan")
+        btn_home = types.KeyboardButton("🚀 /start")
+        step_markup.row(btn_loc)
+        step_markup.row(btn_cancel, btn_home)
 
     msg = bot.send_message(
         chat_id,
-        f"📍 *LANGKAH 3/4 - ALAMAT*\n"
+        f"📍 *LANGKAH 3/4 - ALAMAT PENJEMPUTAN*\n"
         "─────────────────────────\n"
         f"{alamat_hint}",
         parse_mode="Markdown",
-        reply_markup=cancel_order_markup()
+        reply_markup=step_markup
     )
     bot.register_next_step_handler(msg, step_input_alamat)
 
@@ -942,7 +1504,14 @@ def step_input_alamat(message):
         bot.send_message(chat_id, "Kembali ke menu utama:", reply_markup=main_menu())
         return
 
-    user_orders[chat_id]["alamat"] = message.text.strip()
+    if message.location:
+        lat = message.location.latitude
+        lon = message.location.longitude
+        maps_link = f"https://maps.google.com/?q={lat},{lon}"
+        user_orders[chat_id]["alamat"] = f"📍 Titik GPS: {lat:.6f}, {lon:.6f} ([Buka Google Maps]({maps_link}))"
+        user_orders[chat_id]["maps_link"] = maps_link
+    else:
+        user_orders[chat_id]["alamat"] = (message.text or "-").strip()
 
     msg = bot.send_message(
         chat_id,
@@ -1035,6 +1604,16 @@ def step_cek_status(message):
 
     status_label = STATUS_LIST.get(order_rec["status"], order_rec["status"])
     layanan_nama = order_rec.get("layanan") or order_rec.get("produk") or "-"
+    
+    billing_info = ""
+    if order_rec.get("berat_riil"):
+        billing_info += f"⚖️ *Berat Riil Cucian:* {order_rec['berat_riil']}\n"
+    if order_rec.get("total_bayar"):
+        billing_info += f"💵 *Total Tagihan:* Rp {order_rec['total_bayar']:,}\n"
+        billing_info += f"💳 *Status Bayar:* *{order_rec.get('status_bayar', 'Belum Lunas')}*\n"
+    if order_rec.get("rating"):
+        billing_info += f"⭐ *Ulasan Anda:* {'⭐' * int(order_rec['rating'])} ({order_rec['rating']}/5)\n"
+
     result_text = (
         "🔍 *STATUS PENGERJAAN CUCIAN*\n"
         "─────────────────────────\n"
@@ -1042,13 +1621,22 @@ def step_cek_status(message):
         f"⏱️ *Waktu Order:* {order_rec['waktu']}\n\n"
         f"🧺 *Layanan:* {layanan_nama}\n"
         f"⚖️ *Estimasi:* {order_rec.get('estimasi', '-')}\n"
+        f"{billing_info}"
         f"👤 *Nama Pelanggan:* {order_rec['nama']}\n"
         f"📍 *Alamat:* {order_rec['alamat']}\n\n"
         f"📊 *Status Cucian:* *{status_label}*\n"
         "─────────────────────────\n"
         "Jika ada pertanyaan mengenai cucian Anda, silakan hubungi Admin / CS."
     )
-    bot.send_message(chat_id, result_text, parse_mode="Markdown", reply_markup=back_to_main_menu())
+    
+    status_markup = types.InlineKeyboardMarkup()
+    if order_rec.get("total_bayar") and order_rec.get("status_bayar") != "Lunas":
+        btn_proof = types.InlineKeyboardButton("📸 Kirim Bukti Transfer", callback_data=f"kirim_bukti_{order_id}")
+        status_markup.add(btn_proof)
+    btn_back = types.InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="menu_utama")
+    status_markup.add(btn_back)
+
+    bot.send_message(chat_id, result_text, parse_mode="Markdown", reply_markup=status_markup)
 
 
 @bot.message_handler(commands=['cekpesanan', 'status'])
@@ -1063,14 +1651,16 @@ def cek_pesanan_command(message):
         if order_rec:
             status_label = STATUS_LIST.get(order_rec["status"], order_rec["status"])
             layanan_nama = order_rec.get("layanan") or order_rec.get("produk") or "-"
+            tagihan = f"\n💵 Tagihan: Rp {order_rec.get('total_bayar', 0):,} ({order_rec.get('status_bayar', 'Belum Lunas')})" if order_rec.get('total_bayar') else ""
             bot.reply_to(
                 message,
                 f"🔍 *Status Nota `{order_id}`*\n\n"
                 f"🧺 Layanan: {layanan_nama}\n"
-                f"📊 Status: *{status_label}*\n"
+                f"📊 Status: *{status_label}*{tagihan}\n"
                 f"⏱️ Waktu: {order_rec['waktu']}",
                 parse_mode="Markdown"
             )
+
         else:
             bot.reply_to(message, f"⚠️ Nota laundry `{order_id}` tidak ditemukan.", parse_mode="Markdown")
     else:
@@ -1131,7 +1721,7 @@ def call_gemini_ai(query, user_name, is_admin=False):
                 f"Pertanyaan Pelanggan:\n{query}"
             )
 
-        models_to_try = ["gemini-3-flash-preview", "gemini-3.8-flash", "gemini-flash-latest"]
+        models_to_try = ["gemini-3.8-flash", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-2.5-flash"]
         payload = {
             "contents": [{"parts": [{"text": prompt_system}]}],
             "generationConfig": {"temperature": 0.7, "maxOutputTokens": 800}
@@ -1209,17 +1799,21 @@ def smart_local_assistant(query, user_name, is_admin=False):
             total = len(all_orders)
             selesai = sum(1 for o in all_orders.values() if o.get("status") == "selesai")
             aktif = sum(1 for o in all_orders.values() if o.get("status") not in ["selesai", "dibatalkan"])
-            est_omset = selesai * 28000
+            real_omset = sum(int(o.get("total_bayar", 0)) for o in all_orders.values() if isinstance(o.get("total_bayar"), (int, float)))
+            est_omset = real_omset if real_omset > 0 else (selesai * 28000)
+            lunas_count = sum(1 for o in all_orders.values() if o.get("status_bayar") == "Lunas")
             return (
                 "💰 *RINGKASAN ESTIMASI PENDAPATAN & PESANAN*\n"
                 "─────────────────────────\n"
                 f"📦 Total Seluruh Nota Masuk : *{total} nota*\n"
                 f"✅ Pesanan Selesai          : *{selesai} nota*\n"
                 f"⏳ Pesanan Sedang Diproses  : *{aktif} nota*\n"
-                f"💵 Estimasi Pendapatan      : *± Rp {est_omset:,}*\n"
+                f"💳 Pembayaran Lunas         : *{lunas_count} nota*\n"
+                f"💵 Total Omset Tercatat     : *Rp {est_omset:,}*\n"
                 "─────────────────────────\n"
-                "💡 _Estimasi dihitung berdasarkan rata-rata Rp 28.000/nota dari pesanan yang selesai._"
+                "💡 _Gunakan tombol *📥 Unduh Rekap CSV* di Panel Admin atau ketik `/export` untuk download rekap pembukuan._"
             )
+
 
         # 4. TEMPLATE PESAN WHATSAPP UNTUK ADMIN
         if any(k in q for k in ["template", "pesan wa", "chat wa"]):
@@ -1517,6 +2111,28 @@ def step_user_tanya(message):
         return
     is_admin = (message.chat.id == ADMIN_CHAT_ID)
     process_query(message, message.text.strip(), is_admin=is_admin)
+
+
+@bot.message_handler(content_types=['photo'])
+def handle_direct_photo(message):
+    """Handler jika pengguna mengirim foto secara langsung (misal bukti struk transfer)"""
+    chat_id = message.chat.id
+    # Cari pesanan aktif pengguna yang belum lunas
+    user_active_orders = [
+        o for o in all_orders.values()
+        if o.get("buyer_chat_id") == chat_id and o.get("status") not in ["selesai", "dibatalkan"]
+    ]
+    if user_active_orders:
+        latest = sorted(user_active_orders, key=lambda x: x.get("waktu", ""), reverse=True)[0]
+        step_receive_payment_proof(message, latest.get("order_id"))
+    else:
+        bot.reply_to(
+            message,
+            "📸 Terima kasih telah mengirimkan gambar.\n"
+            "Jika ini adalah bukti transfer pembayaran, silakan buat pesanan terlebih dahulu melalui menu *🛵 Pesan Laundry* (`/order`).",
+            parse_mode="Markdown",
+            reply_markup=main_menu()
+        )
 
 
 @bot.message_handler(func=lambda msg: True, content_types=['text'])
