@@ -640,7 +640,8 @@ def finalize_order(chat_id, message):
         else:
             admin_markup.add(btn_wa)
 
-        admin_markup.add(btn_bill)
+        btn_pay = types.InlineKeyboardButton("💳 Approve LUNAS", callback_data=f"admin_pay_lunas_{order_id}")
+        admin_markup.add(btn_bill, btn_pay)
         admin_markup.add(btn_st_cuci, btn_st_setrika)
         admin_markup.add(btn_st_siap, btn_st_selesai)
 

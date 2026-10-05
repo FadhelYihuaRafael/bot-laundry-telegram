@@ -17,13 +17,15 @@ def admin_dashboard_markup():
     """Menu tombol interaktif utama Panel Kontrol Admin"""
     markup = types.InlineKeyboardMarkup(row_width=2)
     btn_active = types.InlineKeyboardButton("⏳ Pesanan Aktif", callback_data="admin_view_active")
+    btn_unpaid = types.InlineKeyboardButton("💳 Approval Bayar", callback_data="admin_view_unpaid")
     btn_find = types.InlineKeyboardButton("🔍 Cari Nota", callback_data="admin_find_order")
     btn_broadcast = types.InlineKeyboardButton("📢 Siaran Pesan Promo", callback_data="admin_start_broadcast")
     btn_export = types.InlineKeyboardButton("📊 Unduh Rekap Excel (.xlsx)", callback_data="admin_export_excel")
     btn_refresh = types.InlineKeyboardButton("🔄 Refresh Data", callback_data="admin_refresh_panel")
     
-    markup.add(btn_active, btn_find)
-    markup.add(btn_broadcast, btn_export)
+    markup.add(btn_active, btn_unpaid)
+    markup.add(btn_find, btn_broadcast)
+    markup.add(btn_export)
     markup.add(btn_refresh)
     return markup
 
@@ -143,6 +145,42 @@ def register_admin_handlers(bot):
             bot.edit_message_text(
                 f"📋 *DAFTAR PESANAN AKTIF ({len(active_orders)} NOTA)*\n"
                 f"Klik nota di bawah untuk mengubah status atau membuat tagihan:",
+                chat_id=chat_id,
+                message_id=msg_id,
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+
+        elif data == "admin_view_unpaid":
+            bot.answer_callback_query(call.id)
+            orders = get_all_orders()
+            unpaid_orders = [
+                o for o in orders.values()
+                if o.get("status_bayar") != "Lunas" and o.get("status") != "dibatalkan"
+            ]
+            if not unpaid_orders:
+                markup = types.InlineKeyboardMarkup()
+                markup.add(types.InlineKeyboardButton("🔙 Kembali ke Panel", callback_data="admin_panel_main"))
+                bot.edit_message_text(
+                    "🎉 *SEMUA TAGIHAN TELAH LUNAS!*\n"
+                    "Tidak ada pesanan yang menunggu approval pembayaran saat ini.",
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    parse_mode="Markdown",
+                    reply_markup=markup
+                )
+                return
+
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for o in sorted(unpaid_orders, key=lambda x: x.get("waktu", ""), reverse=True)[:10]:
+                tagihan_txt = f"Rp {o.get('total_bayar', 0):,}" if o.get("total_bayar") else "Belum input tagihan"
+                btn_txt = f"💳 {o.get('order_id')} | {o.get('nama')} ({tagihan_txt})"
+                markup.add(types.InlineKeyboardButton(btn_txt, callback_data=f"admin_detail_{o.get('order_id')}"))
+            markup.add(types.InlineKeyboardButton("🔙 Kembali ke Panel", callback_data="admin_panel_main"))
+
+            bot.edit_message_text(
+                f"💳 *MENU APPROVAL PEMBAYARAN ({len(unpaid_orders)} NOTA BELUM LUNAS)*\n"
+                f"Pilih nota di bawah untuk verifikasi / approve status pembayaran:",
                 chat_id=chat_id,
                 message_id=msg_id,
                 parse_mode="Markdown",
@@ -293,6 +331,38 @@ def register_admin_handlers(bot):
                     f"Silakan kirimkan kembali bukti transfer yang jelas atau hubungi Admin kami."
                 )
 
+        # Handler Approval Pembayaran Manual oleh Admin
+        elif data.startswith("admin_pay_lunas_"):
+            order_id = data.replace("admin_pay_lunas_", "")
+            order_rec = get_order(order_id)
+            if not order_rec:
+                bot.answer_callback_query(call.id, "Pesanan tidak ditemukan.")
+                return
+
+            update_order(order_id, status_bayar="Lunas")
+            bot.answer_callback_query(call.id, f"Nota {order_id} disetujui: LUNAS! ✅", show_alert=True)
+
+            # Notifikasi ke Pelanggan di Bot Pelanggan
+            buyer_id = order_rec.get("buyer_chat_id")
+            if buyer_id and customer_bot:
+                tagihan_txt = f" sebesar *Rp {order_rec.get('total_bayar', 0):,}*" if order_rec.get("total_bayar") else ""
+                safe_send(
+                    customer_bot,
+                    buyer_id,
+                    f"🎉 *PEMBAYARAN DIVERIFIKASI LUNAS!* ✨\n"
+                    f"─────────────────────────\n"
+                    f"Halo Kak *{order_rec.get('nama')}*! Pembayaran laundry Anda untuk nota `{order_id}`{tagihan_txt} telah kami terima dan diverifikasi *LUNAS* oleh Kasir.\n\n"
+                    f"Terima kasih banyak atas kepercayaan dan pembayaran Anda! 🙏🌸"
+                )
+
+            show_admin_order_card(chat_id, order_id, edit_message_id=msg_id)
+
+        elif data.startswith("admin_pay_unpaid_"):
+            order_id = data.replace("admin_pay_unpaid_", "")
+            update_order(order_id, status_bayar="Belum Lunas")
+            bot.answer_callback_query(call.id, f"Status nota {order_id} diubah: Belum Lunas.")
+            show_admin_order_card(chat_id, order_id, edit_message_id=msg_id)
+
     # ==========================================
     # ROUTER TEKS BEBAS ADMIN (AI ASISTEN OPERASIONAL)
     # ==========================================
@@ -404,6 +474,13 @@ def show_admin_order_card(chat_id, order_id, edit_message_id=None):
     markup = types.InlineKeyboardMarkup(row_width=2)
     btn_wa = types.InlineKeyboardButton("📞 Hubungi WhatsApp", url=wa_link)
     btn_bill = types.InlineKeyboardButton("⚖️ Input Berat & Tagihan", callback_data=f"admin_bill_{order_id}")
+    
+    # Tombol Approval Pembayaran Langsung
+    if order_rec.get("status_bayar") == "Lunas":
+        btn_pay = types.InlineKeyboardButton("✅ STATUS: LUNAS (Klik utk Batalkan)", callback_data=f"admin_pay_unpaid_{order_id}")
+    else:
+        btn_pay = types.InlineKeyboardButton("💳 APPROVE BAYAR: LUNAS ✅", callback_data=f"admin_pay_lunas_{order_id}")
+
     btn_st_cuci = types.InlineKeyboardButton("🧼 Dicuci", callback_data=f"admin_st_dicuci_{order_id}")
     btn_st_setrika = types.InlineKeyboardButton("♨️ Disetrika", callback_data=f"admin_st_setrika_{order_id}")
     btn_st_siap = types.InlineKeyboardButton("📦 Siap Antar", callback_data=f"admin_st_siap_{order_id}")
@@ -417,6 +494,7 @@ def show_admin_order_card(chat_id, order_id, edit_message_id=None):
         markup.add(btn_wa)
 
     markup.add(btn_bill)
+    markup.add(btn_pay)
     markup.add(btn_st_cuci, btn_st_setrika)
     markup.add(btn_st_siap, btn_st_selesai)
     markup.add(btn_st_batal, btn_back)
