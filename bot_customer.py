@@ -231,25 +231,38 @@ def register_customer_handlers(bot):
                 order_id = parts[1]
                 rating_val = parts[2]
                 update_order(order_id, rating=rating_val)
+                order_rec = get_order(order_id) or {}
+                cust_name = order_rec.get("nama") or call.from_user.first_name or "Pelanggan"
                 stars_text = "⭐" * int(rating_val)
+
+                # Pesan konfirmasi ke Pelanggan dengan nama pelanggan
                 bot.edit_message_text(
-                    f"🎉 *TERIMA KASIH ATAS ULASAN ANDA!* ✨\n\n"
-                    f"Anda memberikan rating: {stars_text} ({rating_val}/5)\n"
-                    f"Ulasan Anda sangat berarti untuk membantu kami menjaga kualitas layanan terbaik.",
+                    f"🎉 *TERIMA KASIH ATAS ULASANNYA, KAK {cust_name.upper()}!* ✨\n"
+                    f"─────────────────────────\n"
+                    f"👤 *Nama Pelanggan:* *{cust_name}*\n"
+                    f"📄 *No. Nota:* `{order_id}`\n"
+                    f"⭐ *Penilaian Anda:* {stars_text} ({rating_val}/5 Bintang)\n"
+                    f"─────────────────────────\n"
+                    f"Ulasan Anda sangat berarti bagi tim FreshClean Laundry untuk terus menjaga kualitas layanan terbaik! 🙏🌸",
                     chat_id=chat_id,
                     message_id=msg_id,
                     parse_mode="Markdown",
                     reply_markup=back_to_customer_menu()
                 )
-                # Notifikasi ke Bot Admin
+
+                # Notifikasi ke Bot Admin lengkap dengan nama pelanggan
                 admin_id = load_admin_id()
                 if admin_id and admin_bot:
                     safe_send(
                         admin_bot,
                         admin_id,
-                        f"⭐ *ULASAN BARU DARI PELANGGAN!*\n"
-                        f"• Nota: `{order_id}`\n"
-                        f"• Rating: *{stars_text} ({rating_val}/5)*"
+                        f"⭐ *ULASAN BARU DARI PELANGGAN!* 🧺\n"
+                        f"─────────────────────────\n"
+                        f"👤 *Nama Pelanggan:* *{cust_name}*\n"
+                        f"📄 *No. Nota:* `{order_id}`\n"
+                        f"🧺 *Layanan:* {order_rec.get('layanan', '-')}\n"
+                        f"⭐ *Rating Diberikan:* *{stars_text} ({rating_val}/5 Bintang)*\n"
+                        f"─────────────────────────"
                     )
 
         # Pemilihan Layanan di Alur Order

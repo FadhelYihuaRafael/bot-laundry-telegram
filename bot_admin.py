@@ -373,7 +373,7 @@ def show_admin_order_card(chat_id, order_id, edit_message_id=None):
         billing_info += f"💵 *Tagihan:* Rp {order_rec['total_bayar']:,}\n"
         billing_info += f"💳 *Status Bayar:* *{order_rec.get('status_bayar', 'Belum Lunas')}*\n"
     if order_rec.get("rating"):
-        billing_info += f"⭐ *Ulasan Pelanggan:* {'⭐' * int(order_rec['rating'])} ({order_rec['rating']}/5)\n"
+        billing_info += f"⭐ *Ulasan Pelanggan ({order_rec.get('nama', 'Pelanggan')}):* {'⭐' * int(order_rec['rating'])} ({order_rec['rating']}/5)\n"
 
     # Link WhatsApp Pelanggan
     hp_clean = re.sub(r"[^\d]", "", order_rec.get("hp", ""))
