@@ -598,18 +598,10 @@ def step_admin_input_tagihan(message):
     update_order(order_id, berat_riil=berat_riil, total_bayar=total_bayar)
     order_rec = get_order(order_id)
 
-    safe_send(
-        admin_bot,
-        chat_id,
-        f"✅ *TAGIHAN NOTA `{order_id}` BERHASIL DIBUAT!*\n"
-        f"• Berat Riil : *{berat_riil}*\n"
-        f"• Total Tagihan : *Rp {total_bayar:,}*\n\n"
-        f"Notifikasi tagihan resmi telah otomatis dikirimkan ke Pelanggan.",
-        reply_markup=admin_dashboard_markup()
-    )
-
-    # Kirimkan Tagihan ke BOT PELANGGAN
+    # 1. Kirimkan Tagihan Resmi ke BOT PELANGGAN
     buyer_id = order_rec.get("buyer_chat_id")
+    cust_notif_sent = False
+
     if buyer_id and customer_bot:
         billing_client_card = (
             f"🔔 *TAGIHAN LAUNDRY ANDA SUDAH TERBIT* 🧾\n"
@@ -630,7 +622,26 @@ def step_admin_input_tagihan(message):
         markup.add(types.InlineKeyboardButton("📸 Kirim Bukti Transfer", callback_data=f"kirim_bukti_{order_id}"))
         markup.add(types.InlineKeyboardButton("🔙 Menu Utama", callback_data="menu_utama"))
 
-        safe_send(customer_bot, buyer_id, billing_client_card, reply_markup=markup)
+        res = safe_send(customer_bot, buyer_id, billing_client_card, reply_markup=markup)
+        if res:
+            cust_notif_sent = True
+
+    # 2. Konfirmasi ke ADMIN di Bot Admin
+    if cust_notif_sent:
+        cust_status_msg = "📩 *Tagihan resmi telah TERKIRIM* ke akun pelanggan di Bot Pelanggan (@TokoPancingFadelBot)."
+    else:
+        cust_status_msg = "⚠️ *Catatan:* Tagihan tersimpan, namun notifikasi ke Bot Pelanggan gagal terkirim (Pastikan akun pelanggan sudah menekan /start di Bot Pelanggan)."
+
+    safe_send(
+        admin_bot,
+        chat_id,
+        f"✅ *TAGIHAN NOTA `{order_id}` BERHASIL DIBUAT!*\n"
+        f"• Pelanggan : *{order_rec.get('nama', '-')}*\n"
+        f"• Berat Riil : *{berat_riil}*\n"
+        f"• Total Tagihan : *Rp {total_bayar:,}*\n\n"
+        f"{cust_status_msg}",
+        reply_markup=admin_dashboard_markup()
+    )
 
 def step_admin_search_order(message):
     chat_id = message.chat.id
